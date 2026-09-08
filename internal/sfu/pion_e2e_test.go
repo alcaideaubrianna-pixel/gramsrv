@@ -63,6 +63,10 @@ func (c *fakeTgcallsClient) offer() ClientOffer {
 
 // connect 完成 ICE(controlled)+DTLS(server)+SRTP 建链。
 func (c *fakeTgcallsClient) connect(ctx context.Context, answer ServerAnswer) error {
+	return c.connectWithICERole(ctx, answer, false)
+}
+
+func (c *fakeTgcallsClient) connectWithICERole(ctx context.Context, answer ServerAnswer, controlling bool) error {
 	agent, err := ice.NewAgent(&ice.AgentConfig{
 		NetworkTypes:    []ice.NetworkType{ice.NetworkTypeUDP4},
 		CandidateTypes:  []ice.CandidateType{ice.CandidateTypeHost},
@@ -94,7 +98,12 @@ func (c *fakeTgcallsClient) connect(ctx context.Context, answer ServerAnswer) er
 			return err
 		}
 	}
-	conn, err := agent.Accept(ctx, answer.Ufrag, answer.Pwd) // CONTROLLED
+	var conn *ice.Conn
+	if controlling {
+		conn, err = agent.Dial(ctx, answer.Ufrag, answer.Pwd)
+	} else {
+		conn, err = agent.Accept(ctx, answer.Ufrag, answer.Pwd)
+	}
 	if err != nil {
 		return err
 	}
@@ -203,6 +212,29 @@ func (c *fakeTgcallsClient) sendVideoPacket(ssrc uint32, seq uint16) error {
 
 // 视频选层：发布端三层 simulcast，SFU 只转发 SIM[0] 层（订阅端只为该 ssrc 建
 // 解码 sink，高层包客户端会丢弃，SFU 侧直接终结省下行）。
+func TestPionSFUAcceptsWebAControllingICEClient(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e sfu test")
+	}
+	port := pickUDPPort(t)
+	svc, err := NewPion(PionConfig{UDPPort: port, AdvertiseIP: "127.0.0.1", Logger: zaptest.NewLogger(t)})
+	if err != nil {
+		t.Fatalf("new pion sfu: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client := newFakeTgcallsClient(t, 0x700)
+	defer client.close()
+	answer, err := svc.Join(ctx, 902, 1, EndpointMain, client.offer())
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if err := client.connectWithICERole(ctx, answer, true); err != nil {
+		t.Fatalf("controlling client connect: %v", err)
+	}
+}
+
 func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e sfu test")

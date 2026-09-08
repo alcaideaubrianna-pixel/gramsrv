@@ -340,14 +340,26 @@ func buildGroupCallConnectionParams(answer sfu.ServerAnswer, endpoint string) (s
 	}
 	params := map[string]any{
 		"transport": map[string]any{
-			"ufrag": answer.Ufrag,
-			"pwd":   answer.Pwd,
+			"ufrag":    answer.Ufrag,
+			"pwd":      answer.Pwd,
+			"rtcp-mux": true,
 			"fingerprints": []map[string]any{{
 				"hash":        "sha-256",
 				"fingerprint": answer.FingerprintSHA256,
 				"setup":       "active",
 			}},
 			"candidates": candidates,
+		},
+		"audio": map[string]any{
+			"payload-types": []map[string]any{
+				{"id": 111, "name": "opus", "clockrate": 48000, "channels": 2,
+					"parameters": map[string]any{"minptime": "10", "useinbandfec": "1"},
+					"rtcp-fbs":   []map[string]any{{"type": "transport-cc"}}},
+			},
+			"rtp-hdrexts": []map[string]any{
+				{"id": 1, "uri": "urn:ietf:params:rtp-hdrext:ssrc-audio-level"},
+				{"id": 3, "uri": "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"},
+			},
 		},
 		"video": map[string]any{
 			"endpoint": endpoint,

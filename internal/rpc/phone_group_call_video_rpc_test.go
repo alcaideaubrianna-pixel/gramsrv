@@ -44,6 +44,15 @@ func simulcastGroups(base int64) []map[string]any {
 func connectionVideoEndpoint(t *testing.T, conn *tg.UpdateGroupCallConnection) string {
 	t.Helper()
 	var params struct {
+		Audio struct {
+			PayloadTypes []struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"payload-types"`
+			RtpHdrexts []struct {
+				ID int `json:"id"`
+			} `json:"rtp-hdrexts"`
+		} `json:"audio"`
 		Video struct {
 			Endpoint     string           `json:"endpoint"`
 			PayloadTypes []map[string]any `json:"payload-types"`
@@ -54,6 +63,18 @@ func connectionVideoEndpoint(t *testing.T, conn *tg.UpdateGroupCallConnection) s
 	}
 	if err := json.Unmarshal([]byte(conn.Params.Data), &params); err != nil {
 		t.Fatalf("parse connection params: %v", err)
+	}
+	if len(params.Audio.PayloadTypes) != 1 || params.Audio.PayloadTypes[0].ID != 111 || params.Audio.PayloadTypes[0].Name != "opus" {
+		t.Fatalf("audio payload-types = %v, want Opus/111", params.Audio.PayloadTypes)
+	}
+	audioExtIDs := map[int]bool{}
+	for _, h := range params.Audio.RtpHdrexts {
+		audioExtIDs[h.ID] = true
+	}
+	for _, want := range []int{1, 3} {
+		if !audioExtIDs[want] {
+			t.Fatalf("audio rtp-hdrexts missing id=%d: %v", want, params.Audio.RtpHdrexts)
+		}
 	}
 	if len(params.Video.PayloadTypes) < 4 {
 		t.Fatalf("video payload-types = %v, want VP8/rtx/VP9/rtx", params.Video.PayloadTypes)
