@@ -222,6 +222,11 @@ func tgWebPage(w domain.MessageWebPage) tg.WebPageClass {
 				&tg.WebPageAttributeAiComposeTone{EmojiID: w.ComposeToneEmojiID},
 			})
 		}
+		if w.UniqueGift != nil {
+			page.SetAttributes([]tg.WebPageAttributeClass{
+				&tg.WebPageAttributeUniqueStarGift{Gift: tgUniqueStarGift(*w.UniqueGift)},
+			})
+		}
 		return page
 	case domain.MessageWebPageStateEmpty:
 		page := &tg.WebPageEmpty{ID: w.ID}

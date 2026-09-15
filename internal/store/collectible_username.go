@@ -43,6 +43,11 @@ type CollectibleUsernameStore interface {
 	// from the current holder. Replay by CommandKey is a no-op returning the
 	// current state with changed=false.
 	TransferCollectibleUsername(ctx context.Context, req domain.TransferCollectibleUsernameRequest) (asset domain.CollectibleUsername, changed bool, err error)
+	// PurchaseCollectibleUsername is the public, self-service buy: it debits the
+	// buyer's balance at the asset's recorded price and moves it out of the
+	// vault. It returns domain.ErrCollectibleUsernameNotForSale for anything not
+	// vault-held or unpriced, and domain.ErrStarsInsufficient on a short balance.
+	PurchaseCollectibleUsername(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest) (asset domain.CollectibleUsername, err error)
 	// RevokeCollectibleUsername returns the asset to the vault, or burns it when
 	// req.Burn is set. Burning releases the name back to the free pool.
 	RevokeCollectibleUsername(ctx context.Context, req domain.RevokeCollectibleUsernameRequest) (asset domain.CollectibleUsername, changed bool, err error)
@@ -77,7 +82,9 @@ type UsernameRegistryDeliveryStore interface {
 
 type CollectibleUsernameDeliveryStore interface {
 	MintCollectibleUsernameWithDelivery(ctx context.Context, req domain.MintCollectibleUsernameRequest, effects DeliveryEffectsBuilder[UsernameAudienceDeliverySnapshot]) (asset domain.CollectibleUsername, created bool, err error)
+	UpdateCollectibleUsernamePriceWithDelivery(ctx context.Context, req domain.UpdateCollectibleUsernamePriceRequest, effects DeliveryEffectsBuilder[UsernameAudienceDeliverySnapshot]) (asset domain.CollectibleUsername, changed bool, err error)
 	TransferCollectibleUsernameWithDelivery(ctx context.Context, req domain.TransferCollectibleUsernameRequest, effects DeliveryEffectsBuilder[UsernameAudienceDeliverySnapshot]) (asset domain.CollectibleUsername, changed bool, err error)
+	PurchaseCollectibleUsernameWithDelivery(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest, effects DeliveryEffectsBuilder[UsernameAudienceDeliverySnapshot]) (asset domain.CollectibleUsername, err error)
 	RevokeCollectibleUsernameWithDelivery(ctx context.Context, req domain.RevokeCollectibleUsernameRequest, effects DeliveryEffectsBuilder[UsernameAudienceDeliverySnapshot]) (asset domain.CollectibleUsername, changed bool, err error)
 	DeleteCollectibleUsernameWithDelivery(ctx context.Context, req domain.DeleteCollectibleUsernameRequest, effects DeliveryEffectsBuilder[UsernameAudienceDeliverySnapshot]) (deleted bool, err error)
 }

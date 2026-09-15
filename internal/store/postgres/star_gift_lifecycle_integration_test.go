@@ -1461,7 +1461,7 @@ WHERE saved_gift_id=$1 AND target_user_id=$2`, outsidePurchase.Saved.ID, actor.I
 	if err != nil || directChannelTransfer.Saved.Owner != targetChannelPeer || directChannelTransfer.Unique.Owner != targetChannelPeer {
 		t.Fatalf("direct channel-to-channel transfer=%+v err=%v", directChannelTransfer, err)
 	}
-	assertRetiredChannelStarGiftRefs(t, ctx, pool, outsideOwnershipRefs, directChannelTransfer.Unique, now+7)
+	assertRetiredChannelStarGiftRefs(t, ctx, pool, outsideOwnershipRefs, directChannelTransfer.Unique, now+7, nil)
 	var channelPtsAfterDirectTransfer int
 	if err := pool.QueryRow(ctx, `SELECT pts FROM channels WHERE id=$1`, created.Channel.ID).Scan(&channelPtsAfterDirectTransfer); err != nil ||
 		channelPtsAfterDirectTransfer != channelPtsBeforeDirectTransfer {
@@ -1471,7 +1471,7 @@ WHERE saved_gift_id=$1 AND target_user_id=$2`, outsidePurchase.Saved.ID, actor.I
 	if err != nil || !directChannelTransferReplay.Duplicate || directChannelTransferReplay.Unique.ID != directChannelTransfer.Unique.ID {
 		t.Fatalf("direct channel transfer replay=%+v err=%v", directChannelTransferReplay, err)
 	}
-	assertRetiredChannelStarGiftRefs(t, ctx, pool, outsideOwnershipRefs, directChannelTransferReplay.Unique, now+7)
+	assertRetiredChannelStarGiftRefs(t, ctx, pool, outsideOwnershipRefs, directChannelTransferReplay.Unique, now+7, nil)
 
 	var ptsBeforeUpgrade int
 	if err := pool.QueryRow(ctx, `SELECT pts FROM channels WHERE id=$1`, created.Channel.ID).Scan(&ptsBeforeUpgrade); err != nil {
@@ -1589,7 +1589,7 @@ WHERE saved_gift_id=$1 AND target_user_id=$4`, upgraded.Saved.ID, mutedAdmin.ID,
 		resold.Unique.CraftChancePermille != upgraded.Unique.CraftChancePermille {
 		t.Fatalf("channel-to-channel local TON resale = %+v err %v", resold, err)
 	}
-	assertRetiredChannelStarGiftRefs(t, ctx, pool, sourceOwnershipRefs, resold.Unique, now+7)
+	assertRetiredChannelStarGiftRefs(t, ctx, pool, sourceOwnershipRefs, resold.Unique, now+7, &resaleReq.Amount)
 	var sourceNotificationJobs int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_channel_notification_jobs
 WHERE saved_gift_id=$1 AND (action #>> '{peer_channel_id}')::bigint=$2`, upgraded.Saved.ID, created.Channel.ID).
@@ -1627,7 +1627,7 @@ WHERE channel_id=$1 AND message #>> '{Action,StarGiftUnique,saved_id}'=$2`,
 	if err != nil || !resaleReplay.Duplicate || resaleReplay.Unique.ID != resold.Unique.ID {
 		t.Fatalf("channel resale replay = %+v err %v", resaleReplay, err)
 	}
-	assertRetiredChannelStarGiftRefs(t, ctx, pool, sourceOwnershipRefs, resaleReplay.Unique, now+7)
+	assertRetiredChannelStarGiftRefs(t, ctx, pool, sourceOwnershipRefs, resaleReplay.Unique, now+7, &resaleReq.Amount)
 	if err := pool.QueryRow(ctx, `SELECT balance_nanoton FROM channel_ton_balances WHERE channel_id=$1`, created.Channel.ID).Scan(&channelTON); err != nil || channelTON != 900 {
 		t.Fatalf("channel TON proceeds after replay = %d err %v", channelTON, err)
 	}
@@ -1653,12 +1653,12 @@ WHERE channel_id=$1 AND message #>> '{Action,StarGiftUnique,saved_id}'=$2`,
 	if toUserAction == nil || toUserAction.CanCraftAt != upgraded.Saved.CanCraftAt {
 		t.Fatalf("channel-to-user action did not restore Craft readiness: %+v", toUserAction)
 	}
-	assertRetiredChannelStarGiftRefs(t, ctx, pool, targetOwnershipRefs, toUser.Unique, now+8)
+	assertRetiredChannelStarGiftRefs(t, ctx, pool, targetOwnershipRefs, toUser.Unique, now+8, nil)
 	transferToUserReplay, err := lifecycle.TransferStarGift(ctx, transferToUserReq)
 	if err != nil || !transferToUserReplay.Duplicate || transferToUserReplay.Unique.ID != toUser.Unique.ID {
 		t.Fatalf("channel-to-user transfer replay=%+v err=%v", transferToUserReplay, err)
 	}
-	assertRetiredChannelStarGiftRefs(t, ctx, pool, targetOwnershipRefs, transferToUserReplay.Unique, now+8)
+	assertRetiredChannelStarGiftRefs(t, ctx, pool, targetOwnershipRefs, transferToUserReplay.Unique, now+8, nil)
 	backToChannel, err := lifecycle.TransferStarGift(ctx, domain.StarGiftTransferRequest{
 		ActorUserID: actor.ID,
 		Ref: domain.SavedStarGiftRef{
@@ -1751,6 +1751,7 @@ func assertRetiredChannelStarGiftRefs(
 	refs []starGiftViewerMessageRef,
 	current domain.UniqueStarGift,
 	date int,
+	soldFor *domain.StarGiftAmount,
 ) {
 	t.Helper()
 	gifts := NewStarGiftStore(pool)
@@ -1773,9 +1774,12 @@ func assertRetiredChannelStarGiftRefs(
 			}
 		case domain.MessageServiceActionStarGiftUnique:
 			action := media.ServiceAction.StarGiftUnique
+			resaleAmountOK := (action == nil && soldFor == nil) ||
+				(action != nil && ((action.ResaleAmount == nil && soldFor == nil) ||
+					(action.ResaleAmount != nil && soldFor != nil && *action.ResaleAmount == *soldFor)))
 			if action == nil || action.Gift.ID != current.ID || action.Gift.Owner != current.Owner ||
 				action.Peer != (domain.Peer{}) || action.SavedID != 0 || action.Saved || !action.Transferred ||
-				action.CanExportAt != 0 || action.TransferStars != 0 || action.ResaleAmount != nil ||
+				action.CanExportAt != 0 || action.TransferStars != 0 || !resaleAmountOK ||
 				action.CanTransferAt != 0 || action.CanResellAt != 0 || action.DropOriginalDetailsStars != 0 ||
 				action.CanCraftAt != 0 || action.Gift.CraftChancePermille != 0 || action.Gift.ResellAmount != nil {
 				t.Fatalf("unique channel gift ref not retired %+v: %+v", ref, action)

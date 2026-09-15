@@ -402,7 +402,7 @@ func tgUniqueStarGift(unique domain.UniqueStarGift) *tg.StarGiftUnique {
 		out.SetGiftAddress(unique.GiftAddress)
 	}
 	if unique.ResellAmount != nil {
-		out.SetResellAmount([]tg.StarsAmountClass{tgStarGiftAmount(*unique.ResellAmount)})
+		out.SetResellAmount(tgStarGiftResellAmounts(*unique.ResellAmount))
 	}
 	if peer := tgPeer(unique.ReleasedBy); peer != nil {
 		out.SetReleasedBy(peer)
@@ -436,6 +436,44 @@ func tgStarGiftAmount(amount domain.StarGiftAmount) tg.StarsAmountClass {
 		return &tg.StarsTonAmount{Amount: amount.Amount}
 	}
 	return &tg.StarsAmount{Amount: amount.Amount, Nanos: amount.Nanos}
+}
+
+// starGiftTONStarsRate is how many Stars one whole TON is worth for display
+// purposes only; set once from Config.StarGiftTONStarsRate at router
+// construction (see New in router.go, following the same pattern as
+// groupCallStreamDCID). 100 is a placeholder used only if a router is ever
+// built without going through New (e.g. a hand-built test Router).
+var starGiftTONStarsRate int64 = 100
+
+// tgStarGiftResellAmounts builds starGiftUnique.resell_amount -- a
+// Vector<StarsAmount> (unlike messageActionStarGiftUnique.resale_amount,
+// which is a single StarsAmount and is left to tgStarGiftAmount unchanged).
+//
+// The real Android client (StarGift.getResellAmount) looks up exactly one
+// entry by currency, choosing STARS or TON purely from resale_ton_only
+// (see scanUniqueStarGift's own doc comment) -- not from which entries this
+// vector happens to contain. So a single true-currency entry is all a client
+// actually reads; the extra Stars-equivalent entry added for a TON listing
+// below is harmless bonus data (e.g. for a future client that wants to sort
+// mixed-currency listings by value), not what fixes TON display -- that fix
+// is resale_ton_only being derived correctly.
+
+func tgStarGiftResellAmounts(amount domain.StarGiftAmount) []tg.StarsAmountClass {
+	if amount.Currency != domain.StarGiftCurrencyTON {
+		return []tg.StarsAmountClass{tgStarGiftAmount(amount)}
+	}
+	rate := starGiftTONStarsRate
+	if rate <= 0 {
+		rate = 100
+	}
+	starsEquivalent := amount.Amount * rate / 1_000_000_000
+	if starsEquivalent <= 0 {
+		starsEquivalent = 1
+	}
+	return []tg.StarsAmountClass{
+		&tg.StarsAmount{Amount: starsEquivalent},
+		&tg.StarsTonAmount{Amount: amount.Amount},
+	}
 }
 
 func domainStarGiftAmount(amount tg.StarsAmountClass) (domain.StarGiftAmount, bool) {

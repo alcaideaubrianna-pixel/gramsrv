@@ -1,0 +1,1 @@
+DROP TABLE public.star_gift_limited_purchase_cooldowns;

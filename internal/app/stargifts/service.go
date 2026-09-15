@@ -319,6 +319,18 @@ func (s *Service) SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrd
 	return changed, err
 }
 
+func (s *Service) DeleteCatalog(ctx context.Context, giftID int64) (int, error) {
+	ownersAffected, err := s.store.DeleteCatalog(ctx, giftID)
+	if err == nil {
+		s.InvalidateStarGiftCatalog()
+	}
+	return ownersAffected, err
+}
+
+func (s *Service) DeletionPreview(ctx context.Context, giftID int64) (int, int, error) {
+	return s.store.DeletionPreview(ctx, giftID)
+}
+
 func (s *Service) AnimationJSON(ctx context.Context, giftID int64) ([]byte, bool, error) {
 	return s.store.AnimationJSON(ctx, giftID)
 }

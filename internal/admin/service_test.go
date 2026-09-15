@@ -1741,6 +1741,12 @@ func (*fakeGiftsService) SetCatalogEnabled(context.Context, int64, bool) (bool, 
 func (*fakeGiftsService) SetCatalogSortOrder(context.Context, int64, int) (bool, error) {
 	return true, nil
 }
+func (*fakeGiftsService) DeleteCatalog(context.Context, int64) (int, error) {
+	return 0, nil
+}
+func (*fakeGiftsService) DeletionPreview(context.Context, int64) (int, int, error) {
+	return 0, 0, nil
+}
 func (*fakeGiftsService) AnimationJSON(context.Context, int64) ([]byte, bool, error) {
 	return []byte(`{"v":"5.7"}`), true, nil
 }
@@ -1810,6 +1816,25 @@ func (f *fakeCollectibleUsernamesService) Mint(_ context.Context, req domain.Min
 		ID: asset.ID, CollectibleID: asset.ID, Kind: domain.CollectibleUsernameKindMint,
 		To: req.Owner, Actor: req.Actor, Reason: req.Reason, CommandKey: req.CommandKey,
 	})
+	return asset, true, nil
+}
+
+func (f *fakeCollectibleUsernamesService) UpdatePrice(_ context.Context, req domain.UpdateCollectibleUsernamePriceRequest) (domain.CollectibleUsername, bool, error) {
+	key := strings.ToLower(req.Username)
+	asset, ok := f.assets[key]
+	if !ok {
+		return domain.CollectibleUsername{}, false, domain.ErrCollectibleUsernameNotFound
+	}
+	if asset.Status == domain.CollectibleUsernameStatusBurned {
+		return domain.CollectibleUsername{}, false, domain.ErrCollectibleUsernameBurned
+	}
+	if asset.Currency == req.Currency && asset.Amount == req.Amount &&
+		asset.CryptoCurrency == req.CryptoCurrency && asset.CryptoAmount == req.CryptoAmount {
+		return asset, false, nil
+	}
+	asset.Currency, asset.Amount, asset.CryptoCurrency, asset.CryptoAmount = req.Currency, req.Amount, req.CryptoCurrency, req.CryptoAmount
+	asset.Version++
+	f.assets[key] = asset
 	return asset, true, nil
 }
 

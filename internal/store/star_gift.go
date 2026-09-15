@@ -22,6 +22,10 @@ type StarGiftStore interface {
 	CreateCatalogBundle(ctx context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error)
 	SetCatalogEnabled(ctx context.Context, giftID int64, enabled bool) (bool, error)
 	SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrder int) (bool, error)
+	// DeleteCatalog and DeletionPreview back the admin panel's permanent-delete
+	// action; see StarGiftStore.DeleteCatalog's own doc comment.
+	DeleteCatalog(ctx context.Context, giftID int64) (ownersAffected int, err error)
+	DeletionPreview(ctx context.Context, giftID int64) (ownersAffected int, collectibleInstances int, err error)
 	// AnimationJSON 返回当前版本的规范化 Lottie JSON，供管理后台安全预览。
 	AnimationJSON(ctx context.Context, giftID int64) ([]byte, bool, error)
 	// PublishCollectibleRevision validates and atomically publishes a new immutable attribute pool.

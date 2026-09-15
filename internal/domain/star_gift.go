@@ -535,6 +535,16 @@ func (p StarGiftLifecyclePolicy) Valid() bool {
 type StarGiftMarketPolicy struct {
 	StarsProceedsPermille int
 	TONProceedsPermille   int
+	// ResaleMaxStars/ResaleMaxTONNanoton cap what a seller may list a unique
+	// gift for, in each currency independently. <=0 means unconfigured (no
+	// cap enforced) so a zero-value policy stays backward compatible with
+	// callers -- e.g. unit tests -- that never wire one up.
+	ResaleMaxStars      int64
+	ResaleMaxTONNanoton int64
+	// ResaleMinStars is the fallback Stars floor used when a gift's own
+	// authored resell_min_stars is unset (0). <=0 means unconfigured (no
+	// floor enforced), same backward-compatibility rule as the max fields.
+	ResaleMinStars int64
 }
 
 func (p StarGiftMarketPolicy) Valid() bool {
@@ -967,6 +977,16 @@ func (w StarGiftCatalogWrite) ValidateLifecycleAuthoring(now int) error {
 	if w.LockedUntilDate != 0 && w.LockedUntilDate <= now {
 		return fmt.Errorf("%w: scheduled-release time must be in the future", ErrStarGiftLifecycleInvalid)
 	}
+	// Limited (without an auction): the plain "sold X of Y" supply cap real
+	// Telegram shows on a limited (but not necessarily upgradeable/auctioned)
+	// gift -- a separate authoring surface from an auction's own supply and
+	// from a collectible's unique-tirage attribute pool.
+	if w.Limited && w.AvailabilityTotal <= 0 {
+		return fmt.Errorf("%w: limited requires availability_total > 0", ErrStarGiftLifecycleInvalid)
+	}
+	if !w.Limited && w.AvailabilityTotal != 0 {
+		return fmt.Errorf("%w: availability_total set on a non-limited gift", ErrStarGiftLifecycleInvalid)
+	}
 	return nil
 }
 
@@ -983,14 +1003,16 @@ func (w StarGiftCatalogWrite) ValidateLifecycleAuthoring(now int) error {
 // AvailabilityRemains seeds the client's "N left" projection; auction settlement
 // keeps it in step with gifts_left afterwards.
 func (w *StarGiftCatalogWrite) NormalizeLifecycleAuthoring(now int) {
-	if !w.Auction {
-		return
+	if w.Auction {
+		w.Limited = true
+		if w.AuctionStartDate <= 0 {
+			w.AuctionStartDate = now
+		}
 	}
-	w.Limited = true
-	if w.AuctionStartDate <= 0 {
-		w.AuctionStartDate = now
-	}
-	if w.AvailabilityRemains <= 0 {
+	// Also seeds a plain (non-auction) Limited gift's remaining count -- see
+	// ValidateLifecycleAuthoring's own Limited branch for the authoring
+	// contract this pairs with.
+	if w.Limited && w.AvailabilityRemains <= 0 {
 		w.AvailabilityRemains = w.AvailabilityTotal
 	}
 }
@@ -1106,6 +1128,11 @@ const (
 	MaxStarGiftCollectionTitleRunes         = 12
 	MaxStarGiftCollectionsPerPeer           = 100
 	MaxStarGiftCollectionItems              = 1000
+	// StarGiftLimitedPurchaseCooldown throttles LIMITED ("drop") gift buys to
+	// one per buyer per window, to blunt scoop/scalper scripts against a
+	// scarce drop; see ErrStarGiftPurchaseRateLimited and
+	// prepareStarGiftPurchase. Regular/unlimited gifts are unaffected.
+	StarGiftLimitedPurchaseCooldownSeconds = 180
 	// MaxPinnedStarGifts matches stargifts_pinned_to_top_limit advertised to
 	// official clients. Pin requests are complete replacement vectors.
 	MaxPinnedStarGifts = 6
@@ -1118,31 +1145,46 @@ var (
 	// ErrStarGiftNotFound 表示找不到该已收到礼物实例。
 	ErrStarGiftNotFound = errors.New("stargift: saved gift not found")
 	// ErrStarGiftAlreadyConverted 表示礼物已转换回 Stars（不可重复转换）。
-	ErrStarGiftAlreadyConverted            = errors.New("stargift: already converted")
-	ErrStarGiftFileInvalid                 = errors.New("stargift: invalid animation file")
-	ErrStarGiftCatalogFull                 = errors.New("stargift: catalog full")
-	ErrStarGiftLifecycleInvalid            = errors.New("stargift: invalid auction or scheduled-release parameters")
-	ErrStarGiftCollectibleUnavailable      = errors.New("stargift: collectible upgrade unavailable")
-	ErrStarGiftAlreadyUpgraded             = errors.New("stargift: already upgraded")
-	ErrStarGiftCollectibleSoldOut          = errors.New("stargift: collectible supply exhausted")
-	ErrStarGiftCollectibleInvalid          = errors.New("stargift: invalid collectible definition")
-	ErrStarGiftCollectionNotFound          = errors.New("stargift: collection not found")
-	ErrStarGiftCollectionsFull             = errors.New("stargift: collections full")
-	ErrStarGiftUnavailable                 = errors.New("stargift: unavailable")
-	ErrStarGiftOwnerInvalid                = errors.New("stargift: owner invalid")
-	ErrStarGiftTransferUnavailable         = errors.New("stargift: transfer unavailable")
-	ErrStarGiftResaleUnavailable           = errors.New("stargift: resale unavailable")
-	ErrStarGiftOfferInvalid                = errors.New("stargift: offer invalid")
-	ErrStarGiftOfferExpired                = errors.New("stargift: offer expired")
-	ErrStarGiftCraftUnavailable            = errors.New("stargift: craft unavailable")
-	ErrStarGiftAuctionUnavailable          = errors.New("stargift: auction unavailable")
-	ErrStarGiftWithdrawalUnavailable       = errors.New("stargift: withdrawal provider unavailable")
-	ErrStarGiftExternalizationPending      = errors.New("stargift: externalization pending")
-	ErrStarGiftTONExportInvalid            = errors.New("stargift: TON export invalid")
-	ErrStarGiftTONExportExpired            = errors.New("stargift: TON export expired")
-	ErrStarGiftTONExportStateConflict      = errors.New("stargift: TON export state conflict")
-	ErrStarGiftTONAdmissionUnavailable     = errors.New("stargift: TON worker admission unavailable")
-	ErrStarGiftTONLeaseLost                = errors.New("stargift: TON job lease lost")
+	ErrStarGiftAlreadyConverted = errors.New("stargift: already converted")
+	ErrStarGiftFileInvalid      = errors.New("stargift: invalid animation file")
+	ErrStarGiftCatalogFull      = errors.New("stargift: catalog full")
+	ErrStarGiftLifecycleInvalid = errors.New("stargift: invalid auction or scheduled-release parameters")
+	// ErrStarGiftAuthoringInvalid covers the admin "create/import gift" form
+	// fields that are NOT the lifecycle (auction/drop) ones above and are not
+	// about a catalog gift id either -- price/convert-price/sort-order/title.
+	// Always wrapped with a specific reason via fmt.Errorf("%w: reason", ...);
+	// never returned bare, since the reason is what the operator needs to see.
+	ErrStarGiftAuthoringInvalid = errors.New("stargift: invalid gift authoring fields")
+	// ErrStarGiftPurchaseRateLimited is returned when a buyer tries to buy
+	// another LIMITED ("drop") gift within StarGiftLimitedPurchaseCooldown of
+	// their last one -- an anti-scalper throttle, see prepareStarGiftPurchase.
+	// Unlimited/regular gifts are never subject to it.
+	ErrStarGiftPurchaseRateLimited     = errors.New("stargift: purchase rate limited")
+	ErrStarGiftCollectibleUnavailable  = errors.New("stargift: collectible upgrade unavailable")
+	ErrStarGiftAlreadyUpgraded         = errors.New("stargift: already upgraded")
+	ErrStarGiftCollectibleSoldOut      = errors.New("stargift: collectible supply exhausted")
+	ErrStarGiftCollectibleInvalid      = errors.New("stargift: invalid collectible definition")
+	ErrStarGiftCollectionNotFound      = errors.New("stargift: collection not found")
+	ErrStarGiftCollectionsFull         = errors.New("stargift: collections full")
+	ErrStarGiftUnavailable             = errors.New("stargift: unavailable")
+	ErrStarGiftOwnerInvalid            = errors.New("stargift: owner invalid")
+	ErrStarGiftTransferUnavailable     = errors.New("stargift: transfer unavailable")
+	ErrStarGiftResaleUnavailable       = errors.New("stargift: resale unavailable")
+	ErrStarGiftOfferInvalid            = errors.New("stargift: offer invalid")
+	ErrStarGiftOfferExpired            = errors.New("stargift: offer expired")
+	ErrStarGiftCraftUnavailable        = errors.New("stargift: craft unavailable")
+	ErrStarGiftAuctionUnavailable      = errors.New("stargift: auction unavailable")
+	ErrStarGiftWithdrawalUnavailable   = errors.New("stargift: withdrawal provider unavailable")
+	ErrStarGiftExternalizationPending  = errors.New("stargift: externalization pending")
+	ErrStarGiftTONExportInvalid        = errors.New("stargift: TON export invalid")
+	ErrStarGiftTONExportExpired        = errors.New("stargift: TON export expired")
+	ErrStarGiftTONExportStateConflict  = errors.New("stargift: TON export state conflict")
+	ErrStarGiftTONAdmissionUnavailable = errors.New("stargift: TON worker admission unavailable")
+	ErrStarGiftTONLeaseLost            = errors.New("stargift: TON job lease lost")
+	// ErrStarGiftHasCollectibles 表示该礼物已有实例被转换为独立的收藏级 NFT
+	// （unique_star_gifts），永久删除会破坏这些独立对象（可能已导出到 TON
+	// 链上），因此拒绝——需要先单独处理这些收藏品。
+	ErrStarGiftHasCollectibles             = errors.New("stargift: has upgraded collectible instances")
 	ErrChannelRevenueWithdrawalInvalid     = errors.New("channel revenue: withdrawal invalid")
 	ErrChannelRevenueWithdrawalExpired     = errors.New("channel revenue: withdrawal expired")
 	ErrChannelRevenueInsufficient          = errors.New("channel revenue: insufficient balance")

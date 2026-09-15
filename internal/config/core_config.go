@@ -54,6 +54,11 @@ type CoreHTTPYAML struct {
 	AdminAPIToken     string                 `yaml:"admin_api_token"`
 	AdminScopedTokens []AdminScopedTokenYAML `yaml:"admin_scoped_tokens"`
 	PublicLinkWebAddr *string                `yaml:"public_link_web_addr"`
+	// GiftPreviewCacheDir / GiftPreviewRendererURL enable static gift
+	// preview images (see internal/web's uniqueGiftPreviewImage); both
+	// empty/absent leaves the og:image tag off /nft/{slug} pages.
+	GiftPreviewCacheDir    *string `yaml:"gift_preview_cache_dir"`
+	GiftPreviewRendererURL *string `yaml:"gift_preview_renderer_url"`
 }
 
 type AdminScopedTokenYAML struct {
@@ -271,6 +276,8 @@ type CoreConfig struct {
 	PublicWebBaseURL                   string
 	PublicAppName                      string
 	PublicLinkWebAddr                  string
+	GiftPreviewCacheDir                string
+	GiftPreviewRendererURL             string
 	TelegramLoginEnabled               bool
 	TelegramLoginIssuer                string
 	TelegramLoginAllowHTTP             bool
@@ -438,6 +445,10 @@ type CoreConfig struct {
 	StarGiftOfferMinStars              int
 	StarGiftStarsProceedsPermille      int
 	StarGiftTONProceedsPermille        int
+	StarGiftResaleMaxStars             int64
+	StarGiftResaleMaxTON               int64
+	StarGiftResaleMinStars             int64
+	StarGiftTONStarsRate               int64
 	StarGiftExportDelay                time.Duration
 	StarGiftTransferDelay              time.Duration
 	StarGiftResellDelay                time.Duration
@@ -462,6 +473,7 @@ type CoreConfig struct {
 	StarGiftTONClaimEnabled            bool
 	StarGiftTONClaimBotTokenFile       string
 	StarGiftTONClaimInitDataTTL        time.Duration
+	DevStarsPaymentsEnabled            bool
 	RatingEnabled                      bool
 	RatingPendingDelay                 time.Duration
 	RatingRecomputeInterval            time.Duration
@@ -579,6 +591,8 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		PublicWebBaseURL:                   c.PublicWebBaseURL,
 		PublicAppName:                      c.PublicAppName,
 		PublicLinkWebAddr:                  c.PublicLinkWebAddr,
+		GiftPreviewCacheDir:                c.GiftPreviewCacheDir,
+		GiftPreviewRendererURL:             c.GiftPreviewRendererURL,
 		TelegramLoginEnabled:               c.TelegramLoginEnabled,
 		TelegramLoginIssuer:                c.TelegramLoginIssuer,
 		TelegramLoginAllowHTTP:             c.TelegramLoginAllowHTTP,
@@ -746,6 +760,10 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		StarGiftOfferMinStars:              c.StarGiftOfferMinStars,
 		StarGiftStarsProceedsPermille:      c.StarGiftStarsProceedsPermille,
 		StarGiftTONProceedsPermille:        c.StarGiftTONProceedsPermille,
+		StarGiftResaleMaxStars:             c.StarGiftResaleMaxStars,
+		StarGiftResaleMaxTON:               c.StarGiftResaleMaxTON,
+		StarGiftResaleMinStars:             c.StarGiftResaleMinStars,
+		StarGiftTONStarsRate:               c.StarGiftTONStarsRate,
 		StarGiftExportDelay:                c.StarGiftExportDelay,
 		StarGiftTransferDelay:              c.StarGiftTransferDelay,
 		StarGiftResellDelay:                c.StarGiftResellDelay,
@@ -769,6 +787,7 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		StarGiftTONClaimEnabled:            c.StarGiftTONClaimEnabled,
 		StarGiftTONClaimBotTokenFile:       c.StarGiftTONClaimBotTokenFile,
 		StarGiftTONClaimInitDataTTL:        c.StarGiftTONClaimInitDataTTL,
+		DevStarsPaymentsEnabled:            c.DevStarsPaymentsEnabled,
 		RatingEnabled:                      c.RatingEnabled,
 		RatingPendingDelay:                 c.RatingPendingDelay,
 		RatingRecomputeInterval:            c.RatingRecomputeInterval,
@@ -859,6 +878,8 @@ func LoadCore() (CoreConfig, error) {
 		b.setString("TELESRV_ADMIN_API_TOKEN", y.HTTP.AdminAPIToken)
 		b.setString("TELESRV_ADMIN_SCOPED_TOKENS", formatAdminScopedTokensYAML(y.HTTP.AdminScopedTokens))
 		b.setOptionalString("TELESRV_PUBLIC_LINK_WEB_ADDR", y.HTTP.PublicLinkWebAddr)
+		b.setOptionalString("TELESRV_GIFT_PREVIEW_CACHE_DIR", y.HTTP.GiftPreviewCacheDir)
+		b.setOptionalString("TELESRV_GIFT_PREVIEW_RENDERER_URL", y.HTTP.GiftPreviewRendererURL)
 		if err := applyMediaYAML(b, y.Media); err != nil {
 			return err
 		}

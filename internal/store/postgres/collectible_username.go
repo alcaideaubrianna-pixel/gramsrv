@@ -26,11 +26,30 @@ import (
 // the same name or the same asset serialise instead of interleaving.
 type CollectibleUsernameStore struct {
 	db sqlcgen.DBTX
+	// tonStartingGrant only matters to PurchaseCollectibleUsername: a buyer
+	// paying in TON for the first time gets the same lazy starting grant the
+	// Star Gift TON ledger already gives everyone, via WithCollectibleUsernameTONStartingGrant.
+	tonStartingGrant int64
+}
+
+// CollectibleUsernameOption configures optional CollectibleUsernameStore behaviour.
+type CollectibleUsernameOption func(*CollectibleUsernameStore)
+
+// WithCollectibleUsernameTONStartingGrant sets the lazy TON starting-grant
+// amount applied the first time a buyer pays in TON. It must match the node's
+// configured domain.Config.StarGiftTONStartingGrant (nanoton) so every path
+// into the shared TON ledger grants the same amount exactly once per user.
+func WithCollectibleUsernameTONStartingGrant(nanoton int64) CollectibleUsernameOption {
+	return func(s *CollectibleUsernameStore) { s.tonStartingGrant = nanoton }
 }
 
 // NewCollectibleUsernameStore builds the store on a pgx pool or transaction.
-func NewCollectibleUsernameStore(db sqlcgen.DBTX) *CollectibleUsernameStore {
-	return &CollectibleUsernameStore{db: db}
+func NewCollectibleUsernameStore(db sqlcgen.DBTX, opts ...CollectibleUsernameOption) *CollectibleUsernameStore {
+	s := &CollectibleUsernameStore{db: db}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 var (
@@ -497,6 +516,187 @@ WHERE id = $1`, current.ID, string(req.To.Type), req.To.ID, now); err != nil {
 		return domain.CollectibleUsername{}, false, err
 	}
 	return asset, changed, nil
+}
+
+// UpdateCollectibleUsernamePriceWithDelivery reprices an asset's
+// fragment.collectibleInfo card. It works on any live (non-burned) status:
+// on a vault item this is the admin-facing "set the asking price" action a
+// public buyer's PurchaseCollectibleUsername later reads; on an owned item it
+// only corrects the historical record, matching UpdateCollectiblePhonePrice.
+func (s *CollectibleUsernameStore) UpdateCollectibleUsernamePriceWithDelivery(ctx context.Context, req domain.UpdateCollectibleUsernamePriceRequest, effects store.DeliveryEffectsBuilder[store.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, bool, error) {
+	if s == nil || s.db == nil {
+		return domain.CollectibleUsername{}, false, fmt.Errorf("collectible username store is not configured")
+	}
+	if effects == nil {
+		return domain.CollectibleUsername{}, false, store.ErrDeliveryOutboxRequired
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+	req.CryptoCurrency = strings.ToUpper(strings.TrimSpace(req.CryptoCurrency))
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	if err := req.Validate(); err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	usernameLower := strings.ToLower(req.Username)
+	var out domain.CollectibleUsername
+	changed := false
+	err := withTx(ctx, s.db, "update collectible username price", func(tx pgx.Tx) error {
+		current, err := lockCollectibleUsernameTx(ctx, tx, usernameLower)
+		if err != nil {
+			return err
+		}
+		if current.Status == domain.CollectibleUsernameStatusBurned {
+			return domain.ErrCollectibleUsernameBurned
+		}
+		if current.Currency == req.Currency && current.Amount == req.Amount &&
+			current.CryptoCurrency == req.CryptoCurrency && current.CryptoAmount == req.CryptoAmount {
+			out = current
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE collectible_usernames
+SET currency=$2, amount=$3, crypto_currency=$4, crypto_amount=$5, version=version+1, updated_at=now()
+WHERE id=$1`, current.ID, req.Currency, req.Amount, req.CryptoCurrency, req.CryptoAmount); err != nil {
+			return fmt.Errorf("update collectible username price: %w", err)
+		}
+		loaded, err := collectibleUsernameByIDTx(ctx, tx, current.ID)
+		if err != nil {
+			return err
+		}
+		out = loaded
+		changed = true
+		if current.Owner.Type != "" {
+			return applyUsernameAudienceDeliveryTx(ctx, tx, []domain.Peer{current.Owner}, effects)
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	return out, changed, nil
+}
+
+// PurchaseCollectibleUsername buys a vault-held asset at its recorded
+// Currency/Amount price: it debits the buyer's balance through the same
+// shared ledger primitive Star Gift purchases use, then moves ownership
+// exactly like transferCollectibleUsername does. This is the self-service,
+// no-admin-involved counterpart to TransferCollectibleUsername -- the public
+// "buy" button on a Fragment-style storefront.
+func (s *CollectibleUsernameStore) PurchaseCollectibleUsername(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest) (domain.CollectibleUsername, error) {
+	return s.purchaseCollectibleUsername(ctx, req, nil)
+}
+
+func (s *CollectibleUsernameStore) PurchaseCollectibleUsernameWithDelivery(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest, effects store.DeliveryEffectsBuilder[store.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, error) {
+	if effects == nil {
+		return domain.CollectibleUsername{}, store.ErrDeliveryOutboxRequired
+	}
+	return s.purchaseCollectibleUsername(ctx, req, effects)
+}
+
+func (s *CollectibleUsernameStore) purchaseCollectibleUsername(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest, effects store.DeliveryEffectsBuilder[store.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, error) {
+	if s == nil || s.db == nil {
+		return domain.CollectibleUsername{}, fmt.Errorf("collectible username store is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.CommandKey = strings.TrimSpace(req.CommandKey)
+	if err := req.Validate(); err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	usernameLower := strings.ToLower(req.Username)
+	var asset domain.CollectibleUsername
+	err := withTx(ctx, s.db, "purchase collectible username", func(tx pgx.Tx) error {
+		if replayed, found, err := replayCollectibleUsernameCommand(ctx, tx, req.CommandKey); err != nil {
+			return err
+		} else if found {
+			asset = replayed
+			return nil
+		}
+		current, err := lockCollectibleUsernameTx(ctx, tx, usernameLower)
+		if err != nil {
+			return err
+		}
+		if current.Status != domain.CollectibleUsernameStatusVault {
+			return domain.ErrCollectibleUsernameNotForSale
+		}
+		var currency domain.StarGiftCurrency
+		switch current.Currency {
+		case domain.CollectibleCurrencyStars:
+			currency = domain.StarGiftCurrencyStars
+		case domain.CollectibleCurrencyTON:
+			currency = domain.StarGiftCurrencyTON
+		default:
+			// USD (or anything else) is a bookkeeping-only record: it never backs a
+			// live balance, so an asset priced in it cannot be bought here.
+			return domain.ErrCollectibleUsernameNotForSale
+		}
+		if current.Amount <= 0 {
+			return domain.ErrCollectibleUsernameNotForSale
+		}
+		now := time.Now().UTC()
+		price := domain.StarGiftAmount{Currency: currency, Amount: current.Amount}
+		if _, err := debitLedgerAmountTx(ctx, tx, req.Buyer.ID, price, domain.StarsReasonCollectible,
+			domain.Peer{}, int(now.Unix()), "Collectible username", s.tonStartingGrant); err != nil {
+			return err
+		}
+		count, err := countPeerCollectibleUsernamesTx(ctx, tx, string(req.Buyer.Type), req.Buyer.ID)
+		if err != nil {
+			return err
+		}
+		if count >= domain.MaxPeerCollectibleUsernames {
+			return domain.ErrCollectibleUsernameLimit
+		}
+		if err := insertCollectiblePeerUsernameTx(ctx, tx, string(req.Buyer.Type), req.Buyer.ID,
+			current.Username, usernameLower, current.ID); err != nil {
+			return err
+		}
+		// The purchase date moves to the real sale time, matching the
+		// fragment.collectibleInfo card real Telegram shows on an owned asset --
+		// "bought on <date> for <price>", not the day the operator minted it.
+		if _, err := tx.Exec(ctx, `
+UPDATE collectible_usernames
+SET status = 'owned',
+    owner_peer_type = $2,
+    owner_peer_id = $3,
+    original_owner_peer_type = CASE WHEN original_owner_peer_type = '' THEN $2 ELSE original_owner_peer_type END,
+    original_owner_peer_id = CASE WHEN original_owner_peer_type = '' THEN $3 ELSE original_owner_peer_id END,
+    purchase_date = $4,
+    transfer_count = transfer_count + 1,
+    version = version + 1,
+    updated_at = $4
+WHERE id = $1`, current.ID, string(req.Buyer.Type), req.Buyer.ID, now); err != nil {
+			return fmt.Errorf("update purchased collectible username: %w", err)
+		}
+		if err := insertCollectibleUsernameTransferTx(ctx, tx, collectibleUsernameTransfer{
+			collectibleID: current.ID,
+			kind:          domain.CollectibleUsernameKindTransfer,
+			from:          current.Owner,
+			to:            req.Buyer,
+			currency:      current.Currency,
+			amount:        current.Amount,
+			actor:         req.Actor,
+			reason:        req.Reason,
+			commandKey:    req.CommandKey,
+			createdAt:     now,
+		}); err != nil {
+			return err
+		}
+		loaded, err := collectibleUsernameByIDTx(ctx, tx, current.ID)
+		if err != nil {
+			return err
+		}
+		asset = loaded
+		if effects != nil {
+			return applyUsernameAudienceDeliveryTx(ctx, tx, []domain.Peer{req.Buyer}, effects)
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	return asset, nil
 }
 
 // RevokeCollectibleUsername returns the asset to the vault, or burns it when

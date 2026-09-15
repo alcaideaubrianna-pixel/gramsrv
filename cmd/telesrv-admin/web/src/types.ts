@@ -246,6 +246,10 @@ export type StarGiftRow = {
   ReceivedCount: string;
   CreatedBy: string;
   UpdatedAt: string;
+  Limited: boolean;
+  SoldOut: boolean;
+  AvailabilityRemains: number;
+  AvailabilityTotal: number;
 };
 
 export type StarGiftListResponse = { Gifts: StarGiftRow[] };

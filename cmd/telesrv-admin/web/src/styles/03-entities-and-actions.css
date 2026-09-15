@@ -637,6 +637,7 @@
 .gift-source-size,
 .gift-convert-price { margin-top: 3px; color: var(--muted); font-size: 10px; }
 .gift-table-price { color: var(--warn); }
+.gift-supply-status { margin-top: 4px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .gift-table-actions { display: flex; align-items: center; gap: 6px; }
 .collectible-button { color: var(--purple); background: var(--purple-tint); border-color: var(--purple-border); }
 .collectible-button:hover { background: var(--purple-tint); border-color: var(--purple); }

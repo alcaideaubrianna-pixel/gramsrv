@@ -20,6 +20,10 @@ type StoreConfig struct {
 	ChannelDialogCacheMaxEntries int
 	ChannelBoostCacheMaxEntries  int
 	ChannelBoostCacheTTL         time.Duration
+	// StarGiftTONStartingGrant only matters to the process that actually calls
+	// CollectiblePhoneStore.PurchaseCollectiblePhoneWithDelivery (Core); Egress
+	// leaves it zero since it never performs a purchase.
+	StarGiftTONStartingGrant int64
 }
 
 type StoreOptions struct {
@@ -74,7 +78,7 @@ func NewStores(pool *pgxpool.Pool, rdb *redis.Client, cfg StoreConfig, opts Stor
 	return Stores{
 		UserStore:             postgres.NewUserStore(pool),
 		ContactStore:          contactStore,
-		CollectiblePhoneStore: postgres.NewCollectiblePhoneStore(pool),
+		CollectiblePhoneStore: postgres.NewCollectiblePhoneStore(pool, postgres.WithCollectiblePhoneTONStartingGrant(cfg.StarGiftTONStartingGrant)),
 		ReadModelVersions:     storepkg.NewCachedReadModelVersionStore(postgres.NewReadModelVersionStore(pool), 0, 0),
 		DialogStore:           postgres.NewDialogStore(pool),
 		MessageStore:          postgres.NewMessageStore(pool, messageOptions...),

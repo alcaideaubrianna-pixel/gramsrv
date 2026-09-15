@@ -31,16 +31,34 @@ type collectiblePhoneOwnerCacheValue struct {
 type CollectiblePhoneStore struct {
 	db         sqlcgen.DBTX
 	ownerCache *readmodelcache.Cache[int64, collectiblePhoneOwnerCacheValue]
+	// tonStartingGrant only matters to PurchaseCollectiblePhoneWithDelivery: a
+	// buyer paying in TON for the first time gets the same lazy starting grant
+	// the Star Gift TON ledger already gives everyone.
+	tonStartingGrant int64
 }
 
-func NewCollectiblePhoneStore(db sqlcgen.DBTX) *CollectiblePhoneStore {
-	return &CollectiblePhoneStore{
+// CollectiblePhoneOption configures optional CollectiblePhoneStore behaviour.
+type CollectiblePhoneOption func(*CollectiblePhoneStore)
+
+// WithCollectiblePhoneTONStartingGrant sets the lazy TON starting-grant amount
+// applied the first time a buyer pays in TON. It must match the node's
+// configured domain.Config.StarGiftTONStartingGrant (nanoton).
+func WithCollectiblePhoneTONStartingGrant(nanoton int64) CollectiblePhoneOption {
+	return func(s *CollectiblePhoneStore) { s.tonStartingGrant = nanoton }
+}
+
+func NewCollectiblePhoneStore(db sqlcgen.DBTX, opts ...CollectiblePhoneOption) *CollectiblePhoneStore {
+	s := &CollectiblePhoneStore{
 		db: db,
 		ownerCache: readmodelcache.New(readmodelcache.Config[int64, collectiblePhoneOwnerCacheValue]{
 			MaxEntries: collectiblePhoneOwnerCacheMaxEntries,
 			TTL:        collectiblePhoneOwnerCacheTTL,
 		}),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 var _ store.CollectiblePhoneStore = (*CollectiblePhoneStore)(nil)
@@ -296,6 +314,79 @@ WHERE id=$1 RETURNING `+collectiblePhoneColumns, a.ID, req.ToUserID, original))
 	})
 	if err == nil && changed {
 		s.InvalidateCollectiblePhoneReadModel(previousOwnerUserID)
+		s.InvalidateCollectiblePhoneReadModel(out.OwnerUserID)
+	}
+	return out, changed, err
+}
+
+// PurchaseCollectiblePhoneWithDelivery buys a vault-held number at its
+// recorded CryptoAmount TON price: it debits the buyer through the same
+// shared ledger primitive Star Gift purchases use, then moves ownership
+// exactly like TransferCollectiblePhoneWithDelivery does. This is the
+// self-service, no-admin-involved counterpart to TransferCollectiblePhone.
+func (s *CollectiblePhoneStore) PurchaseCollectiblePhoneWithDelivery(ctx context.Context, req domain.PurchaseCollectiblePhoneRequest, effects store.DeliveryEffectsBuilder[store.CollectiblePhoneDeliverySnapshot]) (domain.CollectiblePhone, bool, error) {
+	if effects == nil {
+		return domain.CollectiblePhone{}, false, store.ErrDeliveryOutboxRequired
+	}
+	req.Phone = domain.NormalizeCollectiblePhone(req.Phone)
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.CommandKey = strings.TrimSpace(req.CommandKey)
+	if err := req.Validate(); err != nil {
+		return domain.CollectiblePhone{}, false, err
+	}
+	var out domain.CollectiblePhone
+	changed := false
+	err := withTx(ctx, s.db, "purchase collectible phone", func(tx pgx.Tx) error {
+		if replay, found, err := replayCollectiblePhone(ctx, tx, req.CommandKey); err != nil {
+			return err
+		} else if found {
+			out = replay
+			return nil
+		}
+		a, err := scanCollectiblePhone(tx.QueryRow(ctx, `SELECT `+collectiblePhoneColumns+` FROM collectible_phones WHERE phone=$1 AND status='vault' FOR UPDATE`, req.Phone))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrCollectiblePhoneNotForSale
+		}
+		if err != nil {
+			return err
+		}
+		if a.CryptoCurrency != domain.CollectibleCryptoCurrencyTON || a.CryptoAmount <= 0 {
+			return domain.ErrCollectiblePhoneNotForSale
+		}
+		if err := ensureCollectiblePhoneOwner(ctx, tx, req.BuyerUserID); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		price := domain.StarGiftAmount{Currency: domain.StarGiftCurrencyTON, Amount: a.CryptoAmount}
+		if _, err := debitLedgerAmountTx(ctx, tx, req.BuyerUserID, price, domain.StarsReasonCollectible,
+			domain.Peer{}, int(now.Unix()), "Collectible phone number", s.tonStartingGrant); err != nil {
+			return err
+		}
+		original := a.OriginalOwnerUserID
+		if original == 0 {
+			original = req.BuyerUserID
+		}
+		out, err = scanCollectiblePhone(tx.QueryRow(ctx, `UPDATE collectible_phones SET status='owned', owner_user_id=$2,
+original_owner_user_id=$3, purchase_date=$4, transfer_count=transfer_count+1, version=version+1, updated_at=$4
+WHERE id=$1 RETURNING `+collectiblePhoneColumns, a.ID, req.BuyerUserID, original, now))
+		if err != nil {
+			if isUniqueViolation(err) {
+				return domain.ErrCollectiblePhoneOwnerLimit
+			}
+			return err
+		}
+		if err := insertCollectiblePhoneTransfer(ctx, tx, a.ID, domain.CollectibleUsernameKindTransfer, a.OwnerUserID, req.BuyerUserID,
+			string(domain.CollectibleCryptoCurrencyTON), a.CryptoAmount, req.Actor, req.Reason, req.CommandKey); err != nil {
+			return err
+		}
+		if err := applyCollectiblePhoneDeliveryTx(ctx, tx, out, []int64{req.BuyerUserID}, effects); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	if err == nil && changed {
 		s.InvalidateCollectiblePhoneReadModel(out.OwnerUserID)
 	}
 	return out, changed, err

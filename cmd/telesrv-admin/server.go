@@ -141,8 +141,10 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.requireAuthAPI(http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
 	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
+	mux.Handle("POST /api/actions/delete-gift", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteStarGiftAPI)))
 	mux.Handle("POST /api/actions/give-gift", s.requireAuthAPI(http.HandlerFunc(s.handleGiveGiftAPI)))
 	mux.Handle("POST /api/actions/mint-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleMintCollectibleUsernameAPI)))
+	mux.Handle("POST /api/actions/update-collectible-username-price", s.requireAuthAPI(http.HandlerFunc(s.handleUpdateCollectibleUsernamePriceAPI)))
 	mux.Handle("POST /api/actions/mint-collectible-phone", s.requireAuthAPI(http.HandlerFunc(s.handleMintCollectiblePhoneAPI)))
 	mux.Handle("POST /api/actions/update-collectible-phone-price", s.requireAuthAPI(http.HandlerFunc(s.handleUpdateCollectiblePhonePriceAPI)))
 	mux.Handle("POST /api/actions/transfer-collectible-phone", s.requireAuthAPI(http.HandlerFunc(s.handleTransferCollectiblePhoneAPI)))
@@ -2066,6 +2068,9 @@ type importStarGiftAPIRequest struct {
 	AuctionRoundDuration int    `json:"auction_round_duration"`
 	AvailabilityTotal    int    `json:"availability_total"`
 	LockedUntilDate      int    `json:"locked_until_date"`
+	// Limited is real Telegram's plain "sold X of Y" supply cap on a gift --
+	// distinct from an auction's own supply (which implies Limited server-side).
+	Limited bool `json:"limited"`
 }
 
 func (s *server) handleImportStarGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -2113,6 +2118,7 @@ func (s *server) handleImportStarGiftAPI(w http.ResponseWriter, r *http.Request)
 		AuctionRoundDuration: body.AuctionRoundDuration,
 		AvailabilityTotal:    body.AvailabilityTotal,
 		LockedUntilDate:      body.LockedUntilDate,
+		Limited:              body.Limited,
 	}
 	result, err := s.callAdminMultipart(r.Context(), "/v1/gifts/import", req, header.Filename, data)
 	writeCommandResultAPI(w, result, err)
@@ -2136,6 +2142,18 @@ type importOfficialStarGiftAPIRequest struct {
 	// Unix seconds at which the imported gift becomes purchasable. Zero keeps the
 	// snapshot's own release time.
 	LockedUntilDate int `json:"locked_until_date"`
+
+	// Optional lifecycle authoring for the auction panel and the plain
+	// "sold X of Y" supply cap. Zero values keep the snapshot's own
+	// lifecycle; the admin service validates the combination before writing
+	// a revision. See ImportOfficialStarGiftRequest's own doc comments.
+	Auction              bool   `json:"auction"`
+	AuctionSlug          string `json:"auction_slug"`
+	GiftsPerRound        int    `json:"gifts_per_round"`
+	AuctionStartDate     int    `json:"auction_start_date"`
+	AuctionRoundDuration int    `json:"auction_round_duration"`
+	Limited              bool   `json:"limited"`
+	AvailabilityTotal    int    `json:"availability_total"`
 }
 
 func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -2153,7 +2171,14 @@ func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.
 		Stars: body.Stars, ConvertStars: body.ConvertStars, Enabled: body.Enabled, SortOrder: body.SortOrder,
 		IncludeCollectible: body.IncludeCollectible, UpgradeStars: body.UpgradeStars,
 		SupplyTotal: body.SupplyTotal, SlugPrefix: body.SlugPrefix,
-		LockedUntilDate: body.LockedUntilDate,
+		LockedUntilDate:      body.LockedUntilDate,
+		Auction:              body.Auction,
+		AuctionSlug:          body.AuctionSlug,
+		GiftsPerRound:        body.GiftsPerRound,
+		AuctionStartDate:     body.AuctionStartDate,
+		AuctionRoundDuration: body.AuctionRoundDuration,
+		Limited:              body.Limited,
+		AvailabilityTotal:    body.AvailabilityTotal,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import", req)
 	writeCommandResultAPI(w, result, err)
@@ -2280,6 +2305,26 @@ func (s *server) handleSetStarGiftSortOrderAPI(w http.ResponseWriter, r *http.Re
 		GiftID:      body.GiftID, SortOrder: body.SortOrder,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/set-sort-order", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type deleteStarGiftAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	GiftID    int64  `json:"gift_id,string"`
+}
+
+func (s *server) handleDeleteStarGiftAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteStarGiftAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteStarGiftRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-gift"),
+		GiftID:      body.GiftID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/delete", req)
 	writeCommandResultAPI(w, result, err)
 }
 
@@ -2420,6 +2465,34 @@ func (s *server) handleMintCollectibleUsernameAPI(w http.ResponseWriter, r *http
 		PurchaseDate:   body.PurchaseDate.Unix(),
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/collectible-usernames/mint", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type updateCollectibleUsernamePriceAPIRequest struct {
+	CommandID      string    `json:"command_id"`
+	Reason         string    `json:"reason"`
+	Confirm        bool      `json:"confirm"`
+	Username       string    `json:"username"`
+	Currency       string    `json:"currency"`
+	Amount         flexInt64 `json:"amount"`
+	CryptoCurrency string    `json:"crypto_currency"`
+	CryptoAmount   flexInt64 `json:"crypto_amount"`
+}
+
+func (s *server) handleUpdateCollectibleUsernamePriceAPI(w http.ResponseWriter, r *http.Request) {
+	var b updateCollectibleUsernamePriceAPIRequest
+	if !decodeAction(w, r, &b) {
+		return
+	}
+	req := admin.UpdateCollectibleUsernamePriceRequest{
+		CommandMeta:    s.commandMetaFromAPI(r, b.CommandID, b.Reason, b.Confirm, "update-collectible-username-price"),
+		Username:       b.Username,
+		Currency:       b.Currency,
+		Amount:         b.Amount.Int64(),
+		CryptoCurrency: b.CryptoCurrency,
+		CryptoAmount:   b.CryptoAmount.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/collectible-usernames/update-price", req)
 	writeCommandResultAPI(w, result, err)
 }
 

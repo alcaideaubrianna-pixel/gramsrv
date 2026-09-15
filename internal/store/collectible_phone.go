@@ -28,6 +28,11 @@ type CollectiblePhoneDeliveryStore interface {
 	MintCollectiblePhoneWithDelivery(context.Context, domain.MintCollectiblePhoneRequest, DeliveryEffectsBuilder[CollectiblePhoneDeliverySnapshot]) (domain.CollectiblePhone, bool, error)
 	UpdateCollectiblePhonePriceWithDelivery(context.Context, domain.UpdateCollectiblePhonePriceRequest, DeliveryEffectsBuilder[CollectiblePhoneDeliverySnapshot]) (domain.CollectiblePhone, bool, error)
 	TransferCollectiblePhoneWithDelivery(context.Context, domain.TransferCollectiblePhoneRequest, DeliveryEffectsBuilder[CollectiblePhoneDeliverySnapshot]) (domain.CollectiblePhone, bool, error)
+	// PurchaseCollectiblePhoneWithDelivery is the public, self-service buy: it
+	// debits the buyer's TON balance at the asset's recorded CryptoAmount price
+	// and moves it out of the vault. It returns domain.ErrCollectiblePhoneNotForSale
+	// for anything not vault-held, and domain.ErrStarsInsufficient on a short balance.
+	PurchaseCollectiblePhoneWithDelivery(context.Context, domain.PurchaseCollectiblePhoneRequest, DeliveryEffectsBuilder[CollectiblePhoneDeliverySnapshot]) (domain.CollectiblePhone, bool, error)
 	RevokeCollectiblePhoneWithDelivery(context.Context, domain.RevokeCollectiblePhoneRequest, DeliveryEffectsBuilder[CollectiblePhoneDeliverySnapshot]) (domain.CollectiblePhone, bool, error)
 	DeleteCollectiblePhoneWithDelivery(context.Context, domain.DeleteCollectiblePhoneRequest, DeliveryEffectsBuilder[CollectiblePhoneDeliverySnapshot]) (bool, error)
 }

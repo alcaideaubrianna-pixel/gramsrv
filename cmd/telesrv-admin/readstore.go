@@ -439,6 +439,16 @@ type StarGiftRow struct {
 	ReceivedCount int64 `json:"ReceivedCount,string"`
 	CreatedBy     string
 	UpdatedAt     time.Time
+	// Limited/SoldOut/AvailabilityRemains/AvailabilityTotal: real Telegram's
+	// plain "sold X of Y" supply bar (see GiftsPage.tsx's "Limited" authoring
+	// field). SoldOut is what lets the table -- and the "hide sold-out
+	// version" action -- distinguish a gift that's simply disabled from one
+	// that's disabled *because it ran out*, without the operator having to
+	// cross-reference remains/total by hand.
+	Limited             bool
+	SoldOut             bool
+	AvailabilityRemains int
+	AvailabilityTotal   int
 }
 
 func (s *readStore) ListStarGifts(ctx context.Context) ([]StarGiftRow, error) {
@@ -447,7 +457,8 @@ SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
        c.enabled, c.sort_order, r.document_id, r.source_name, r.source_format,
        encode(r.animation_sha256, 'hex'), d.size, r.width, r.height, r.frame_rate,
        (SELECT COUNT(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id),
-       r.created_by, c.updated_at
+       r.created_by, c.updated_at,
+       r.limited, r.sold_out, c.availability_remains, r.availability_total
 FROM star_gift_catalog c
 JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
 JOIN documents d ON d.id = r.document_id
@@ -465,6 +476,7 @@ LIMIT $1`, domain.MaxStarGiftCatalogSize)
 			&row.Enabled, &row.SortOrder, &row.DocumentID, &row.SourceName, &row.SourceFormat,
 			&row.AnimationSHA, &row.AnimationSize, &row.Width, &row.Height, &row.FrameRate,
 			&row.ReceivedCount, &row.CreatedBy, &row.UpdatedAt,
+			&row.Limited, &row.SoldOut, &row.AvailabilityRemains, &row.AvailabilityTotal,
 		); err != nil {
 			return nil, err
 		}

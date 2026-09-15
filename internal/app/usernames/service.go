@@ -385,6 +385,35 @@ func (s *Service) Mint(ctx context.Context, req domain.MintCollectibleUsernameRe
 	return asset, created, nil
 }
 
+// UpdatePrice reprices an asset's fragment.collectibleInfo card without
+// touching ownership -- the admin action that makes a vault item's asking
+// price adjustable after the mint that first set it.
+func (s *Service) UpdatePrice(ctx context.Context, req domain.UpdateCollectibleUsernamePriceRequest) (domain.CollectibleUsername, bool, error) {
+	collectibles, err := s.collectibleStore()
+	if err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+	req.CryptoCurrency = strings.ToUpper(strings.TrimSpace(req.CryptoCurrency))
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	if err := req.Validate(); err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	if s.userDelivery == nil {
+		return domain.CollectibleUsername{}, false, store.ErrDeliveryOutboxRequired
+	}
+	asset, changed, err := collectibles.UpdateCollectibleUsernamePriceWithDelivery(ctx, req, s.userDelivery)
+	if err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	if changed && asset.Owner.Type != "" {
+		s.notifyChannelPeers(ctx, asset.Owner)
+	}
+	return asset, changed, nil
+}
+
 // Transfer moves the asset to req.To, either out of the vault or from the
 // current holder. Both the previous and the new holder are invalidated.
 func (s *Service) Transfer(ctx context.Context, req domain.TransferCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error) {
@@ -411,6 +440,35 @@ func (s *Service) Transfer(ctx context.Context, req domain.TransferCollectibleUs
 		s.notifyChannelPeers(ctx, previousOwner, req.To, asset.Owner)
 	}
 	return asset, changed, nil
+}
+
+// Purchase is the public, self-service buy: it debits the buyer's balance at
+// the asset's recorded price and moves it out of the vault, exactly like
+// fragment.com's "Buy" button. It is the un-authenticated-actor counterpart to
+// Transfer -- there is no admin actor performing this on someone else's
+// behalf, so unlike Transfer it never needs currentOwner (a purchase can only
+// ever originate from the vault) and only the buyer is notified.
+func (s *Service) Purchase(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest) (domain.CollectibleUsername, error) {
+	collectibles, err := s.collectibleStore()
+	if err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.CommandKey = strings.TrimSpace(req.CommandKey)
+	if err := req.Validate(); err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	if s.userDelivery == nil {
+		return domain.CollectibleUsername{}, store.ErrDeliveryOutboxRequired
+	}
+	asset, err := collectibles.PurchaseCollectibleUsernameWithDelivery(ctx, req, s.userDelivery)
+	if err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	s.notifyChannelPeers(ctx, asset.Owner)
+	return asset, nil
 }
 
 // Revoke returns the asset to the vault, or burns it when req.Burn is set.

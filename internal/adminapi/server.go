@@ -83,6 +83,7 @@ type Service interface {
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	SetStarGiftEnabled(ctx context.Context, req admin.SetStarGiftEnabledRequest) (admin.CommandResult, error)
 	SetStarGiftSortOrder(ctx context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error)
+	DeleteStarGift(ctx context.Context, req admin.DeleteStarGiftRequest) (admin.CommandResult, error)
 	GiveGift(ctx context.Context, req admin.GiveGiftRequest) (admin.CommandResult, error)
 	StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
 	EmojiAnimation(ctx context.Context, documentID int64) ([]byte, bool, error)
@@ -102,6 +103,7 @@ type Service interface {
 	SubmitModerationAppeal(ctx context.Context, caseID, appellantUserID int64, text string) (domain.ModerationAppeal, bool, error)
 	ReviewModerationAppeal(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
 	MintCollectibleUsername(ctx context.Context, req admin.MintCollectibleUsernameRequest) (admin.CommandResult, error)
+	UpdateCollectibleUsernamePrice(ctx context.Context, req admin.UpdateCollectibleUsernamePriceRequest) (admin.CommandResult, error)
 	TransferCollectibleUsername(ctx context.Context, req admin.TransferCollectibleUsernameRequest) (admin.CommandResult, error)
 	RevokeCollectibleUsername(ctx context.Context, req admin.RevokeCollectibleUsernameRequest) (admin.CommandResult, error)
 	DeleteCollectibleUsername(ctx context.Context, req admin.DeleteCollectibleUsernameRequest) (admin.CommandResult, error)
@@ -261,6 +263,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/gifts/{id}/collectibles/publish", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
+	mux.HandleFunc("POST /v1/gifts/delete", s.authenticated(s.handleDeleteStarGift))
 	mux.HandleFunc("POST /v1/gifts/give", s.authenticated(s.handleGiveGift))
 	mux.HandleFunc("GET /v1/gifts/{id}/animation", s.authenticated(s.handleStarGiftAnimation))
 	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
@@ -280,6 +283,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/moderation/cases/{id}/appeals", s.authenticated(s.handleSubmitModerationAppeal))
 	mux.HandleFunc("POST /v1/moderation/cases/{id}/appeals/{appeal_id}/review", s.authenticated(s.handleReviewModerationAppeal))
 	mux.HandleFunc("POST /v1/collectible-usernames/mint", s.authenticated(s.handleMintCollectibleUsername))
+	mux.HandleFunc("POST /v1/collectible-usernames/update-price", s.authenticated(s.handleUpdateCollectibleUsernamePrice))
 	mux.HandleFunc("POST /v1/collectible-usernames/transfer", s.authenticated(s.handleTransferCollectibleUsername))
 	mux.HandleFunc("POST /v1/collectible-usernames/revoke", s.authenticated(s.handleRevokeCollectibleUsername))
 	mux.HandleFunc("POST /v1/collectible-usernames/delete", s.authenticated(s.handleDeleteCollectibleUsername))
@@ -1092,6 +1096,15 @@ func (s *Server) handleSetStarGiftSortOrder(w http.ResponseWriter, r *http.Reque
 	writeCommandResult(w, result, err)
 }
 
+func (s *Server) handleDeleteStarGift(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteStarGiftRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteStarGift(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
 func (s *Server) handleGiveGift(w http.ResponseWriter, r *http.Request) {
 	var req admin.GiveGiftRequest
 	if !decodeJSON(w, r, &req) {
@@ -1609,6 +1622,15 @@ func (s *Server) handleMintCollectibleUsername(w http.ResponseWriter, r *http.Re
 		return
 	}
 	result, err := s.svc.MintCollectibleUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleUpdateCollectibleUsernamePrice(w http.ResponseWriter, r *http.Request) {
+	var req admin.UpdateCollectibleUsernamePriceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.UpdateCollectibleUsernamePrice(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

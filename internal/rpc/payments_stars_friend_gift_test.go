@@ -107,7 +107,7 @@ func starsFriendGiftTestRouter(t *testing.T) (*Router, *starsFriendGiftRPCStore,
 	outbox := memory.NewDeliveryOutboxStore()
 	starsStore.AttachDeliveryOutbox(outbox)
 	st := &starsFriendGiftRPCStore{StarsStore: starsStore, outbox: outbox}
-	r := New(Config{DC: 2, PublicBaseURL: "https://links.example.test"}, Deps{
+	r := New(Config{DC: 2, PublicBaseURL: "https://links.example.test", DevStarsPaymentsEnabled: true}, Deps{
 		Users: appusers.NewService(users),
 		Stars: appstars.NewService(st, appstars.WithStartingGrant(0), appstars.WithPurchaseStore(st)),
 	}, zaptest.NewLogger(t), clock.System)

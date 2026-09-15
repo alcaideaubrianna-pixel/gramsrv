@@ -552,6 +552,16 @@ func scanUniqueStarGift(row rowScanner) (domain.UniqueStarGift, error) {
 	if listingCurrency != "" && listingAmount > 0 {
 		unique.ResellAmount = &domain.StarGiftAmount{Currency: domain.StarGiftCurrency(listingCurrency), Amount: listingAmount}
 	}
+	// ResaleTonOnly is official clients' sole signal for "is this listing
+	// priced in TON" -- they use it to pick both the display currency and the
+	// buy-invoice currency (see ResaleGiftsFragment.buyGift and
+	// SellGiftEnterPriceSheet's free Stars/TON toggle in the real Android
+	// client). It is not a permanent per-gift restriction despite the name;
+	// derive it live from the active listing's own currency, the same way
+	// ResellAmount already is, rather than trusting the u.resale_ton_only
+	// column -- nothing in this codebase ever wrote that column, so it was
+	// permanently false (its DEFAULT) for every gift.
+	unique.ResaleTonOnly = listingCurrency == string(domain.StarGiftCurrencyTON)
 	if lastSaleCurrency != "" && unique.LastSaleDate > 0 {
 		unique.LastSaleAmount = &domain.StarGiftAmount{Currency: domain.StarGiftCurrency(lastSaleCurrency), Amount: lastSaleAmount}
 	}

@@ -279,6 +279,10 @@ func (f *fakeUniqueGifts) UniqueBySlug(_ context.Context, slug string) (domain.U
 	return value, ok, nil
 }
 
+func (f *fakeUniqueGifts) CollectibleAnimationJSON(_ context.Context, _ int64, _ domain.StarGiftCollectibleAttributeKind, _ int64) ([]byte, bool, error) {
+	return nil, false, nil
+}
+
 func TestHandlerServesUniqueGiftLandingPage(t *testing.T) {
 	const slug = "official-5895603153683874485-7"
 	resolver := &fakeUniqueGifts{bySlug: map[string]domain.UniqueStarGift{

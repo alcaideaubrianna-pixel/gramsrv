@@ -198,6 +198,15 @@ type Config struct {
 	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/、
 	// /addlist/ 与 hash-only /appeal/ 路由反代到该地址。
 	PublicLinkWebAddr string
+	// GiftPreviewCacheDir, when set together with GiftPreviewRendererURL,
+	// enables static og:image previews for /nft/{slug} pages: composited
+	// PNGs are rendered once by the external gift-preview-renderer service
+	// and cached to this directory forever after.
+	GiftPreviewCacheDir string
+	// GiftPreviewRendererURL is the internal HTTP endpoint (POST .../render)
+	// of the gift-preview-renderer service. Empty disables gift preview
+	// images entirely.
+	GiftPreviewRendererURL string
 	// TelegramLoginEnabled mounts the self-hosted Telegram Login/OIDC provider
 	// on PublicLinkWebAddr. Secrets are file-backed so they are not exposed in
 	// process listings or accidentally copied into tracked .env templates.
@@ -564,12 +573,27 @@ type Config struct {
 	// durable notification/delivery outboxes. It is entirely server-local.
 	StarGiftSweepInterval time.Duration
 	// StarGiftSweepBatch bounds rows/aggregates claimed by one sweep.
-	StarGiftSweepBatch                 int
-	StarGiftTransferStars              int64
-	StarGiftDropOriginalDetailsStars   int64
-	StarGiftOfferMinStars              int
-	StarGiftStarsProceedsPermille      int
-	StarGiftTONProceedsPermille        int
+	StarGiftSweepBatch               int
+	StarGiftTransferStars            int64
+	StarGiftDropOriginalDetailsStars int64
+	StarGiftOfferMinStars            int
+	StarGiftStarsProceedsPermille    int
+	StarGiftTONProceedsPermille      int
+	// StarGiftResaleMaxStars/StarGiftResaleMaxTON cap what a seller may list a
+	// unique gift for. TON is expressed in whole TON on this env var and
+	// converted to nanoton for the market policy.
+	StarGiftResaleMaxStars int64
+	StarGiftResaleMaxTON   int64
+	// StarGiftResaleMinStars is the fallback Stars floor used when a gift's
+	// own authored resell_min_stars is unset (0). 125 matches real
+	// Telegram's own stars_stargift_resale_amount_min app-config default.
+	StarGiftResaleMinStars int64
+	// StarGiftTONStarsRate is how many Stars one whole TON is worth for
+	// display purposes only (the resell_amount vector shown while browsing a
+	// TON-priced listing carries both the true TON amount and this Stars
+	// equivalent, matching official clients' own price line). It does not
+	// affect what is actually charged.
+	StarGiftTONStarsRate               int64
 	StarGiftExportDelay                time.Duration
 	StarGiftTransferDelay              time.Duration
 	StarGiftResellDelay                time.Duration
@@ -593,6 +617,12 @@ type Config struct {
 	StarGiftTONClaimEnabled            bool
 	StarGiftTONClaimBotTokenFile       string
 	StarGiftTONClaimInitDataTTL        time.Duration
+
+	// DevStarsPaymentsEnabled gates the fake "buy stars with a card" payment
+	// provider that always succeeds without charging anything real -- see
+	// rpc.Config.DevStarsPaymentsEnabled. Defaults to false; exploited live
+	// 2026-09-08 for 2M+ free stars while this was unconditionally reachable.
+	DevStarsPaymentsEnabled bool
 
 	// RatingEnabled controls the local admin-only composite account rating.
 	// Disabled keeps every local projection empty and refuses rating writes; no
@@ -994,6 +1024,8 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		PublicWebBaseURL:                      publicWebBaseURL,
 		PublicAppName:                         publicAppName,
 		PublicLinkWebAddr:                     envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
+		GiftPreviewCacheDir:                   envAllowEmptyOr("TELESRV_GIFT_PREVIEW_CACHE_DIR", ""),
+		GiftPreviewRendererURL:                envAllowEmptyOr("TELESRV_GIFT_PREVIEW_RENDERER_URL", ""),
 		TelegramLoginEnabled:                  envBoolOr("TELESRV_TELEGRAM_LOGIN_ENABLE", false),
 		TelegramLoginIssuer:                   strings.TrimSuffix(envOr("TELESRV_TELEGRAM_LOGIN_ISSUER", publicBaseURL), "/"),
 		TelegramLoginAllowHTTP:                envBoolOr("TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP", false),
@@ -1203,6 +1235,10 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		StarGiftOfferMinStars:              envIntOr("TELESRV_STARGIFT_OFFER_MIN_STARS", 1),
 		StarGiftStarsProceedsPermille:      envIntOr("TELESRV_STARGIFT_STARS_PROCEEDS_PERMILLE", 1000),
 		StarGiftTONProceedsPermille:        envIntOr("TELESRV_STARGIFT_TON_PROCEEDS_PERMILLE", 1000),
+		StarGiftResaleMaxStars:             envInt64Or("TELESRV_STARGIFT_RESALE_MAX_STARS", 250_000),
+		StarGiftResaleMaxTON:               envInt64Or("TELESRV_STARGIFT_RESALE_MAX_TON", 10_000),
+		StarGiftResaleMinStars:             envInt64Or("TELESRV_STARGIFT_RESALE_MIN_STARS", 125),
+		StarGiftTONStarsRate:               envInt64Or("TELESRV_STARGIFT_TON_STARS_RATE", 100),
 		StarGiftExportDelay:                envDurationOr("TELESRV_STARGIFT_EXPORT_DELAY", 0),
 		StarGiftTransferDelay:              envDurationOr("TELESRV_STARGIFT_TRANSFER_DELAY", 0),
 		StarGiftResellDelay:                envDurationOr("TELESRV_STARGIFT_RESELL_DELAY", 0),
@@ -1754,6 +1790,12 @@ func validateStarGiftConfig(cfg Config) error {
 	}
 	if cfg.StarGiftTransferStars < 0 || cfg.StarGiftDropOriginalDetailsStars < 0 || cfg.StarGiftOfferMinStars < 0 {
 		return fmt.Errorf("TELESRV_STARGIFT_TRANSFER_STARS, TELESRV_STARGIFT_DROP_DETAILS_STARS and TELESRV_STARGIFT_OFFER_MIN_STARS must be non-negative")
+	}
+	if cfg.StarGiftResaleMaxStars <= 0 || cfg.StarGiftResaleMaxTON <= 0 || cfg.StarGiftTONStarsRate <= 0 {
+		return fmt.Errorf("TELESRV_STARGIFT_RESALE_MAX_STARS, TELESRV_STARGIFT_RESALE_MAX_TON and TELESRV_STARGIFT_TON_STARS_RATE must be positive")
+	}
+	if cfg.StarGiftResaleMinStars <= 0 {
+		return fmt.Errorf("TELESRV_STARGIFT_RESALE_MIN_STARS must be positive")
 	}
 	if cfg.StarGiftExportDelay < 0 || cfg.StarGiftTransferDelay < 0 || cfg.StarGiftResellDelay < 0 || cfg.StarGiftCraftDelay < 0 {
 		return fmt.Errorf("TELESRV_STARGIFT lifecycle delays must be non-negative")

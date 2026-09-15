@@ -257,6 +257,11 @@ func (s *StarGiftLifecycleStore) prepareStarGiftPurchase(ctx context.Context, tx
 		gift.Limited && remains <= 0 {
 		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, domain.ErrStarGiftInvalid
 	}
+	// Anti-scalper per-buyer cooldown on LIMITED/"drop" gifts (see
+	// domain.StarGiftLimitedPurchaseCooldownSeconds) removed per explicit
+	// request -- was blocking legitimate repeat buys, not just scalper
+	// scripts. star_gift_limited_purchase_cooldowns is left unused rather
+	// than dropped, in case the throttle comes back later.
 	if gift.RevisionID != req.RevisionID {
 		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, domain.ErrStarGiftFormAmountMismatch
 	}
@@ -299,7 +304,23 @@ WHERE NOT $3 OR star_gift_user_purchases.purchased_count<$4 RETURNING purchased_
 		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, err
 	}
 	if gift.Limited {
+		// Selling the last unit also disables the catalog row in the same
+		// statement -- Catalog()/CatalogGift() both filter on c.enabled, so
+		// the sold-out tile drops off the buy list on the very next fetch
+		// instead of lingering with a "Продано" badge.
+		//
+		// BUT only when there is also no active resale market
+		// (availability_resale<=0): the catalog tile is the client's only
+		// navigation entry point into that gift's resale/NFT screen, so
+		// disabling it while resale listings still exist would hide a live
+		// NFT marketplace behind an unreachable tile -- found live 2026-09-08
+		// (see updateStarGiftResaleProjection for the matching re-check that
+		// runs whenever a resale listing is added/removed later). Saved/unique
+		// gift ownership and the convert-to-collectible path
+		// (lockActiveCollectibleRevision joins star_gift_catalog without
+		// filtering on enabled) are unaffected either way.
 		if tag, err := tx.Exec(ctx, `UPDATE star_gift_catalog SET availability_remains=availability_remains-1,
+enabled=CASE WHEN availability_remains-1<=0 AND availability_resale<=0 THEN false ELSE enabled END,
 first_sale_date=CASE WHEN first_sale_date=0 THEN $2 ELSE first_sale_date END,last_sale_date=$2,updated_at=now()
 WHERE gift_id=$1 AND availability_remains>0`, gift.ID, req.Date); err != nil || tag.RowsAffected() != 1 {
 			return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, domain.ErrStarGiftUnavailable

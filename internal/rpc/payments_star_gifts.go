@@ -725,7 +725,7 @@ func (r *Router) onPaymentsSendPaymentForm(ctx context.Context, req *tg.Payments
 	if err != nil {
 		return nil, internalErr()
 	}
-	if !validDevStarsPaymentCredentials(req.Credentials, req.FormID) {
+	if !r.cfg.DevStarsPaymentsEnabled || !validDevStarsPaymentCredentials(req.Credentials, req.FormID) {
 		return nil, tgerr.New(400, "PAYMENT_CREDENTIALS_INVALID")
 	}
 	if _, present := req.GetRequestedInfoID(); present || req.RequestedInfoID != "" {

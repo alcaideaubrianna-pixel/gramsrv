@@ -94,6 +94,8 @@ http:
   admin_api_addr: 0.0.0.0:2599
   admin_api_token: ${TELESRV_ADMIN_API_TOKEN}
   public_link_web_addr: 0.0.0.0:2401
+  gift_preview_cache_dir: /var/lib/telesrv-core/gift-previews
+  gift_preview_renderer_url: http://gift-preview-renderer:2680/render
 
 outbox:
   lease_timeout: 30s

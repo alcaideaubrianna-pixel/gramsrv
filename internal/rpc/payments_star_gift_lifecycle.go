@@ -540,9 +540,18 @@ func (r *Router) onPaymentsGetResaleStarGifts(ctx context.Context, req *tg.Payme
 		}
 		if found {
 			hash := int64(preview.Revision)
-			out.SetAttributesHash(hash)
+			// SetAttributes and SetAttributesHash share the SAME wire flag bit
+			// (flags.1) -- that's the real Telegram schema, not a choice made
+			// here. Calling SetAttributesHash alone (the "hash still matches,
+			// nothing to resend" case below) sets that bit while leaving
+			// Attributes at its Go zero value (nil), which the TL encoder
+			// then rejects for every single request: "malformed canonical
+			// value: explicit flag has nil interface field attributes". Every
+			// call through this branch must always leave Attributes non-nil,
+			// so build it (empty slice when unchanged, is fine and distinct
+			// from "field absent") before ever touching the shared flag.
+			attributes := make([]tg.StarGiftAttributeClass, 0, len(preview.Models)+len(preview.Patterns)+len(preview.Backdrops))
 			if attributesHash != hash {
-				attributes := make([]tg.StarGiftAttributeClass, 0, len(preview.Models)+len(preview.Patterns)+len(preview.Backdrops))
 				for _, attribute := range preview.Models {
 					attributes = append(attributes, tgStarGiftAttribute(attribute))
 				}
@@ -552,8 +561,9 @@ func (r *Router) onPaymentsGetResaleStarGifts(ctx context.Context, req *tg.Payme
 				for _, attribute := range preview.Backdrops {
 					attributes = append(attributes, tgStarGiftAttribute(attribute))
 				}
-				out.SetAttributes(attributes)
 			}
+			out.SetAttributes(attributes)
+			out.SetAttributesHash(hash)
 		}
 	}
 	return out, nil
@@ -1070,6 +1080,11 @@ func starGiftLifecycleErr(err error) error {
 		return tgerr.New(400, "STARGIFT_WITHDRAWAL_UNAVAILABLE")
 	case errors.Is(err, domain.ErrStarGiftCraftUnavailable):
 		return tgerr.New(400, "STARGIFT_CRAFT_UNAVAILABLE")
+	case errors.Is(err, domain.ErrStarGiftPurchaseRateLimited):
+		// Anti-scalper throttle on LIMITED/"drop" gifts (see
+		// prepareStarGiftPurchase) -- a real FLOOD_WAIT so official clients
+		// show their normal "try again in Ns" UI instead of a generic error.
+		return floodWaitErr(domain.StarGiftLimitedPurchaseCooldownSeconds)
 	case errors.Is(err, domain.ErrStarGiftNotFound), errors.Is(err, domain.ErrStarGiftResaleUnavailable),
 		errors.Is(err, domain.ErrStarGiftTransferUnavailable), errors.Is(err, domain.ErrStarGiftOfferInvalid),
 		errors.Is(err, domain.ErrStarGiftAuctionUnavailable),

@@ -172,9 +172,16 @@ func equalUserIDSets(a, b []int64) bool {
 // must not leave an older chat card with Craft/transfer/resale capabilities.
 // The aggregate mutation and all message edits share one transaction and each
 // visible box receives its own durable pts/event/outbox entry.
+//
+// soldFor is nil for every ownership change except a completed marketplace
+// sale (PurchaseResaleStarGift), where it carries the price actually paid.
+// Without it this retirement unconditionally blanks ResaleAmount on the old
+// card, so the former owner's retired copy read as a bare "transferred" with
+// no price even when they were just paid for it.
 func (s *StarGiftLifecycleStore) retireUserStarGiftMessagesTx(
 	ctx context.Context,
 	tx pgx.Tx,
+	soldFor *domain.StarGiftAmount,
 	source domain.SavedStarGift,
 	current domain.UniqueStarGift,
 	lockScope userStarGiftProjectionLockScope,
@@ -286,7 +293,7 @@ FOR UPDATE`, source.Owner.ID, msgID).Scan(&peerType, &peerID)
 			}
 			action.CanExportAt = 0
 			action.TransferStars = 0
-			action.ResaleAmount = nil
+			action.ResaleAmount = soldFor
 			action.CanTransferAt = 0
 			action.CanResellAt = 0
 			action.DropOriginalDetailsStars = 0
@@ -356,9 +363,12 @@ WHERE owner_user_id=$1 AND saved_gift_id=$2`, source.Owner.ID, source.ID); err !
 	return edits, nil
 }
 
+// soldFor is nil for every ownership change except a completed marketplace
+// sale, matching retireUserStarGiftMessagesTx's own soldFor parameter.
 func (s *StarGiftLifecycleStore) retireChannelStarGiftMessagesTx(
 	ctx context.Context,
 	tx pgx.Tx,
+	soldFor *domain.StarGiftAmount,
 	source domain.SavedStarGift,
 	current domain.UniqueStarGift,
 	refs []starGiftViewerMessageRef,
@@ -428,7 +438,7 @@ FOR UPDATE`, ref.UserID, ref.MsgID).Scan(&messageSenderID, &privateMessageID)
 			action.Transferred = true
 			action.CanExportAt = 0
 			action.TransferStars = 0
-			action.ResaleAmount = nil
+			action.ResaleAmount = soldFor
 			action.CanTransferAt = 0
 			action.CanResellAt = 0
 			action.DropOriginalDetailsStars = 0

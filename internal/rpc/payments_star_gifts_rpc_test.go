@@ -448,7 +448,7 @@ func starGiftTestRouterWithPremium(t *testing.T, requirePremium bool) (*Router, 
 	baseGifts := appstargifts.NewService(giftStore, nil, 2)
 	gifts := newStarGiftAggregateRPCService(baseGifts, starsStore.StarsStore, msgStore, channelStore, 1000)
 	gifts.outbox = starsStore.outbox
-	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398, PublicBaseURL: "https://links.example.test"}, Deps{
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398, PublicBaseURL: "https://links.example.test", DevStarsPaymentsEnabled: true}, Deps{
 		Users:    appusers.NewService(users),
 		Messages: appmessages.NewService(msgStore, dialogs),
 		Channels: appchannels.NewService(channelStore),
@@ -507,7 +507,7 @@ func TestStarsGiveawayCatalogFormSettlementReplayAndInfo(t *testing.T) {
 	}
 	starsStore := newStarsTopupRPCStore()
 	starsStore.channel = created.Channel
-	r := New(Config{DC: 2, PublicBaseURL: "https://links.example.test"}, Deps{
+	r := New(Config{DC: 2, PublicBaseURL: "https://links.example.test", DevStarsPaymentsEnabled: true}, Deps{
 		Users: appusers.NewService(users), Channels: appchannels.NewService(channelStore),
 		Stars: appstars.NewService(starsStore, appstars.WithStartingGrant(0), appstars.WithPurchaseStore(starsStore)),
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(int64(now), 0)})
@@ -1227,8 +1227,12 @@ func TestUniqueGiftSenderMirrorHidesOwnerLifecycleControls(t *testing.T) {
 	if _, ok := sender.GetTransferStars(); ok {
 		t.Fatal("sender mirror exposed transfer_stars")
 	}
-	if _, ok := sender.GetResaleAmount(); ok {
-		t.Fatal("sender mirror exposed resale_amount")
+	// ResaleAmount is a completed sale's price, not a forward-looking owner
+	// control -- unlike the fields above, it must survive the mirror
+	// projection so the seller's own copy of the message still reads "sold
+	// for X" instead of a bare "transferred" with no price.
+	if amount, ok := sender.GetResaleAmount(); !ok || amount.(*tg.StarsAmount).Amount != 100 {
+		t.Fatalf("sender mirror dropped or altered resale_amount: %#v ok=%v", amount, ok)
 	}
 	if _, ok := sender.GetCanExportAt(); ok {
 		t.Fatal("sender mirror exposed can_export_at")

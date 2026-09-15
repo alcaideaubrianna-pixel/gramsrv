@@ -17,6 +17,9 @@ var (
 	ErrCollectiblePhoneNotOwned   = errors.New("collectible phone not owned")
 	ErrCollectiblePhoneBurned     = errors.New("collectible phone burned")
 	ErrCollectiblePhoneOwnerLimit = errors.New("user already owns a collectible phone")
+	// ErrCollectiblePhoneNotForSale rejects a public purchase of a number that is
+	// not sitting in the vault.
+	ErrCollectiblePhoneNotForSale = errors.New("collectible phone not for sale")
 )
 
 // CollectiblePhoneTier controls visibility. Standard numbers follow the
@@ -182,6 +185,26 @@ type TransferCollectiblePhoneRequest struct {
 
 func (r TransferCollectiblePhoneRequest) Validate() error {
 	if !ValidCollectiblePhone(r.Phone) || r.ToUserID <= 0 || len(r.Actor) > MaxCollectibleUsernameActorLength || len(r.Reason) > MaxCollectibleUsernameReasonLength || len(r.CommandKey) > MaxCollectibleUsernameCommandKeyLength {
+		return ErrCollectiblePhoneInvalid
+	}
+	return nil
+}
+
+// PurchaseCollectiblePhoneRequest buys a vault-held number at its recorded
+// price -- the public, self-service counterpart of an admin
+// TransferCollectiblePhoneRequest out of the vault. The price paid is always
+// CryptoAmount nanoton (CryptoCurrency is pinned to TON by
+// ValidateCollectiblePhonePrice on every mint); Currency/Amount stay a
+// USD-cents bookkeeping display only, exactly like fragment.collectibleInfo.
+type PurchaseCollectiblePhoneRequest struct {
+	Phone                     string
+	BuyerUserID               int64
+	Actor, Reason, CommandKey string
+}
+
+func (r PurchaseCollectiblePhoneRequest) Validate() error {
+	if !ValidCollectiblePhone(r.Phone) || r.BuyerUserID <= 0 || len(r.Actor) > MaxCollectibleUsernameActorLength ||
+		len(r.Reason) > MaxCollectibleUsernameReasonLength || len(r.CommandKey) > MaxCollectibleUsernameCommandKeyLength {
 		return ErrCollectiblePhoneInvalid
 	}
 	return nil

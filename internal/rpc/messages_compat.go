@@ -390,6 +390,9 @@ func (r *Router) resolveWebPageForRequest(ctx context.Context, url string) (doma
 	if page, ok := r.resolveAIComposeStyleWebPage(ctx, url); ok {
 		return page, true
 	}
+	if page, ok := r.resolveUniqueGiftWebPage(ctx, url); ok {
+		return page, true
+	}
 	if r.deps.Files == nil {
 		return domain.MessageWebPage{}, false
 	}

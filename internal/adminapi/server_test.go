@@ -792,6 +792,10 @@ func (fakeService) SetStarGiftSortOrder(_ context.Context, req admin.SetStarGift
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) DeleteStarGift(_ context.Context, req admin.DeleteStarGiftRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) StarGiftAnimation(context.Context, int64) ([]byte, bool, error) {
 	return []byte(`{"v":"5.7","w":512,"h":512}`), true, nil
 }
@@ -1172,6 +1176,10 @@ func TestAdminAPIMissingCollectibleAndRatingReportCodedErrors(t *testing.T) {
 }
 
 func (fakeService) MintCollectibleUsername(_ context.Context, req admin.MintCollectibleUsernameRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) UpdateCollectibleUsernamePrice(_ context.Context, req admin.UpdateCollectibleUsernamePriceRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 

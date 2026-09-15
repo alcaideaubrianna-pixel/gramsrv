@@ -58,6 +58,7 @@ const (
 	ActionPublishGiftCollectibles = "gifts.collectibles.publish"
 	ActionSetStarGiftEnabled      = "gifts.set_enabled"
 	ActionSetStarGiftSortOrder    = "gifts.set_sort_order"
+	ActionDeleteStarGift          = "gifts.delete"
 	ActionGiveGift                = "gifts.give"
 	ActionCreateBot               = "bot.create"
 	ActionCreateBroadcast         = "broadcast.create"
@@ -75,15 +76,16 @@ const (
 	ActionDeleteBot               = "bot.delete"
 	ActionExportBotToken          = "bot.export_token"
 	// Collectible (Fragment-style) username lifecycle.
-	ActionMintCollectibleUsername     = "usernames.collectible.mint"
-	ActionTransferCollectibleUsername = "usernames.collectible.transfer"
-	ActionRevokeCollectibleUsername   = "usernames.collectible.revoke"
-	ActionDeleteCollectibleUsername   = "usernames.collectible.delete"
-	ActionMintCollectiblePhone        = "phones.collectible.mint"
-	ActionUpdateCollectiblePhonePrice = "phones.collectible.update_price"
-	ActionTransferCollectiblePhone    = "phones.collectible.transfer"
-	ActionRevokeCollectiblePhone      = "phones.collectible.revoke"
-	ActionDeleteCollectiblePhone      = "phones.collectible.delete"
+	ActionMintCollectibleUsername        = "usernames.collectible.mint"
+	ActionUpdateCollectibleUsernamePrice = "usernames.collectible.update_price"
+	ActionTransferCollectibleUsername    = "usernames.collectible.transfer"
+	ActionRevokeCollectibleUsername      = "usernames.collectible.revoke"
+	ActionDeleteCollectibleUsername      = "usernames.collectible.delete"
+	ActionMintCollectiblePhone           = "phones.collectible.mint"
+	ActionUpdateCollectiblePhonePrice    = "phones.collectible.update_price"
+	ActionTransferCollectiblePhone       = "phones.collectible.transfer"
+	ActionRevokeCollectiblePhone         = "phones.collectible.revoke"
+	ActionDeleteCollectiblePhone         = "phones.collectible.delete"
 	// Composite account rating.
 	ActionRecomputeAccountRating = "rating.recompute"
 	ActionAdjustAccountRating    = "rating.adjust"
@@ -303,6 +305,8 @@ type GiftsService interface {
 	CreateCatalogBundle(ctx context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error)
 	SetCatalogEnabled(ctx context.Context, giftID int64, enabled bool) (bool, error)
 	SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrder int) (bool, error)
+	DeleteCatalog(ctx context.Context, giftID int64) (ownersAffected int, err error)
+	DeletionPreview(ctx context.Context, giftID int64) (ownersAffected int, collectibleInstances int, err error)
 	AnimationJSON(ctx context.Context, giftID int64) ([]byte, bool, error)
 	CreateCollectibleRevision(ctx context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error)
 	CollectiblePreview(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
@@ -388,6 +392,7 @@ type ModerationService interface {
 // editable slot and the row order belong to the peer, not to the operator.
 type CollectibleUsernamesService interface {
 	Mint(ctx context.Context, req domain.MintCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
+	UpdatePrice(ctx context.Context, req domain.UpdateCollectibleUsernamePriceRequest) (domain.CollectibleUsername, bool, error)
 	Transfer(ctx context.Context, req domain.TransferCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
 	Revoke(ctx context.Context, req domain.RevokeCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
 	Delete(ctx context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error)
@@ -826,6 +831,11 @@ type ImportStarGiftRequest struct {
 	AuctionRoundDuration int    `json:"auction_round_duration,omitempty"`
 	AvailabilityTotal    int    `json:"availability_total,omitempty"`
 	LockedUntilDate      int    `json:"locked_until_date,omitempty"`
+	// Limited is real Telegram's plain "sold X of Y" supply cap on a gift --
+	// independent of Auction (which is its own kind of limited supply) and of
+	// a collectible's unique-tirage attribute-pool size. AvailabilityTotal
+	// above doubles as this cap's total when Limited is set without Auction.
+	Limited bool `json:"limited,omitempty"`
 }
 
 type ImportOfficialStarGiftRequest struct {
@@ -843,10 +853,37 @@ type ImportOfficialStarGiftRequest struct {
 	SlugPrefix         string `json:"slug_prefix,omitempty"`
 	// LockedUntilDate schedules the local release of an imported official gift.
 	// Zero keeps whatever release time the snapshot carries. Validated in
-	// ImportOfficialStarGift, which requires a future timestamp.
+	// ImportOfficialStarGift, which requires a future timestamp. Mutually
+	// exclusive with Auction below (an auction has its own start date, not a
+	// scheduled-release time).
 	LockedUntilDate int      `json:"locked_until_date,omitempty"`
 	ManifestSHA256  string   `json:"manifest_sha256,omitempty"`
 	AssetSHA256     []string `json:"asset_sha256,omitempty"`
+
+	// Auction* mirrors ImportStarGiftRequest's own auction-authoring fields
+	// above (see its doc comment) -- the admin panel previously only exposed
+	// these on the file-upload path and left an official/snapshot import
+	// stuck with the snapshot's own (usually already-elapsed) auction state.
+	// SupplyTotal above doubles as the auction's availability_total when
+	// Auction is set, same as ImportStarGiftRequest's AvailabilityTotal.
+	// Validated in ImportOfficialStarGift via domain.StarGiftCatalogWrite.
+	// ValidateLifecycleAuthoring, unlike the rest of this request (see that
+	// function's own doc comment on why the official path otherwise skips it).
+	Auction              bool   `json:"auction,omitempty"`
+	AuctionSlug          string `json:"auction_slug,omitempty"`
+	GiftsPerRound        int    `json:"gifts_per_round,omitempty"`
+	AuctionStartDate     int    `json:"auction_start_date,omitempty"`
+	AuctionRoundDuration int    `json:"auction_round_duration,omitempty"`
+
+	// Limited/AvailabilityTotal: real Telegram's plain "sold X of Y" supply
+	// cap, independent of Auction (its own kind of limited supply, using
+	// SupplyTotal above instead) and of the collectible's unique-tirage
+	// attribute-pool size (also SupplyTotal, when IncludeCollectible). A
+	// separate field because the operator may want a smaller/larger public
+	// sale cap than the collectible's own variant count -- the panel
+	// defaults this to the unique-tirage value but leaves it editable.
+	Limited           bool `json:"limited,omitempty"`
+	AvailabilityTotal int  `json:"availability_total,omitempty"`
 }
 
 type SetStarGiftEnabledRequest struct {
@@ -859,6 +896,17 @@ type SetStarGiftSortOrderRequest struct {
 	CommandMeta
 	GiftID    int64 `json:"gift_id"`
 	SortOrder int   `json:"sort_order"`
+}
+
+// DeleteStarGiftRequest permanently removes a catalog entry, the market
+// listing, the admin panel's own row, and every peer's held copies -- keeping
+// only the underlying, content-addressed animation/document pack in the blob
+// store. See StarGiftStore.DeleteCatalog's own doc comment for exactly what
+// is and is not touched, and why a gift with upgraded collectible instances
+// is refused rather than force-deleted.
+type DeleteStarGiftRequest struct {
+	CommandMeta
+	GiftID int64 `json:"gift_id"`
 }
 
 // GiveGiftRequest grants a catalog gift to a recipient (user or channel) from
@@ -1202,6 +1250,19 @@ type MintCollectibleUsernameRequest struct {
 	CryptoAmount   int64  `json:"crypto_amount,string,omitempty"`
 	URL            string `json:"url,omitempty"`
 	PurchaseDate   int64  `json:"purchase_date,omitempty"`
+}
+
+// UpdateCollectibleUsernamePriceRequest reprices an asset's
+// fragment.collectibleInfo card without touching ownership. Amount and
+// CryptoAmount are minor units (nanotons for TON), so they cross the JSON
+// boundary as decimal strings and stay exact, matching Mint's shape.
+type UpdateCollectibleUsernamePriceRequest struct {
+	CommandMeta
+	Username       string `json:"username"`
+	Currency       string `json:"currency"`
+	Amount         int64  `json:"amount,string"`
+	CryptoCurrency string `json:"crypto_currency,omitempty"`
+	CryptoAmount   int64  `json:"crypto_amount,string,omitempty"`
 }
 
 // TransferCollectibleUsernameRequest moves an asset out of the vault or between
@@ -2541,6 +2602,49 @@ func (s *Service) MintCollectibleUsername(ctx context.Context, req MintCollectib
 	})
 }
 
+// UpdateCollectibleUsernamePrice reprices an asset's fragment.collectibleInfo
+// card without touching ownership -- how an operator adjusts a vault item's
+// asking price after the mint that first set it.
+func (s *Service) UpdateCollectibleUsernamePrice(ctx context.Context, req UpdateCollectibleUsernamePriceRequest) (CommandResult, error) {
+	if s == nil || s.usernames == nil {
+		return CommandResult{}, fmt.Errorf("admin collectible username dependency is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+	req.CryptoCurrency = strings.ToUpper(strings.TrimSpace(req.CryptoCurrency))
+	if err := domain.ValidateCollectibleAmounts(req.Currency, req.Amount, req.CryptoCurrency, req.CryptoAmount); err != nil {
+		return CommandResult{}, codedError(CodeCollectibleCurrencyInvalid, err)
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionUpdateCollectibleUsernamePrice, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		existing, err := s.usernames.Collectible(ctx, req.Username)
+		if err != nil {
+			return CommandResult{}, collectibleUsernameError(err)
+		}
+		details := map[string]any{
+			"username":        req.Username,
+			"owner_type":      string(existing.Owner.Type),
+			"owner_id":        strconv.FormatInt(existing.Owner.ID, 10),
+			"currency":        req.Currency,
+			"amount":          strconv.FormatInt(req.Amount, 10),
+			"crypto_currency": req.CryptoCurrency,
+			"crypto_amount":   strconv.FormatInt(req.CryptoAmount, 10),
+		}
+		if req.DryRun {
+			return CommandResult{Message: "collectible username price update validated", Details: details}, nil
+		}
+		updated, changed, err := s.usernames.UpdatePrice(ctx, domain.UpdateCollectibleUsernamePriceRequest{
+			Username: req.Username, Currency: req.Currency, Amount: req.Amount,
+			CryptoCurrency: req.CryptoCurrency, CryptoAmount: req.CryptoAmount, Actor: req.Actor, Reason: req.Reason,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["changed"] = changed
+		details["status"] = string(updated.Status)
+		return CommandResult{Message: "collectible username price updated", Details: details}, nil
+	})
+}
+
 // TransferCollectibleUsername moves an asset to a new holder. The asset must
 // exist and must not be burned; the store keeps the move atomic with the
 // receiving peer's username registry row.
@@ -3598,15 +3702,40 @@ func (s *Service) ImportStarGift(ctx context.Context, req ImportStarGiftRequest)
 	if s == nil || s.gifts == nil {
 		return CommandResult{}, fmt.Errorf("star gift service is not configured")
 	}
-	if req.GiftID < 0 || req.Stars <= 0 || req.ConvertStars < 0 || req.ConvertStars > req.Stars ||
-		req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 ||
-		len([]rune(strings.TrimSpace(req.Title))) > domain.MaxStarGiftTitleRunes {
-		return CommandResult{}, domain.ErrStarGiftInvalid
+	// Each condition below used to collapse into the single bare
+	// domain.ErrStarGiftInvalid ("stargift: invalid gift id") -- a message
+	// written for "this gift id is not in the catalog" and reused here for
+	// four unrelated field mistakes, so an operator hitting e.g. a
+	// convert_stars > stars typo saw a misleading "invalid gift id" error
+	// with nothing pointing at the actual field. Give each its own reason.
+	if req.GiftID < 0 {
+		return CommandResult{}, fmt.Errorf("%w: gift id must not be negative", domain.ErrStarGiftAuthoringInvalid)
+	}
+	if req.Stars <= 0 {
+		return CommandResult{}, fmt.Errorf("%w: price in stars must be positive", domain.ErrStarGiftAuthoringInvalid)
+	}
+	if req.ConvertStars < 0 {
+		return CommandResult{}, fmt.Errorf("%w: convert stars must not be negative", domain.ErrStarGiftAuthoringInvalid)
+	}
+	if req.ConvertStars > req.Stars {
+		return CommandResult{}, fmt.Errorf("%w: convert stars (%d) exceeds price (%d) in stars",
+			domain.ErrStarGiftAuthoringInvalid, req.ConvertStars, req.Stars)
+	}
+	if req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 {
+		return CommandResult{}, fmt.Errorf("%w: sort order out of range", domain.ErrStarGiftAuthoringInvalid)
+	}
+	if len([]rune(strings.TrimSpace(req.Title))) > domain.MaxStarGiftTitleRunes {
+		return CommandResult{}, fmt.Errorf("%w: title exceeds %d characters", domain.ErrStarGiftAuthoringInvalid, domain.MaxStarGiftTitleRunes)
 	}
 	lifecycle := domain.StarGiftCatalogWrite{
 		Auction: req.Auction, AuctionSlug: strings.TrimSpace(req.AuctionSlug), GiftsPerRound: req.GiftsPerRound,
 		AuctionStartDate: req.AuctionStartDate, AuctionRoundDuration: req.AuctionRoundDuration,
 		AvailabilityTotal: req.AvailabilityTotal, LockedUntilDate: req.LockedUntilDate,
+		// Limited without Auction: the plain sold-X-of-Y supply cap (see the
+		// request field's own doc comment). Auction already implies Limited
+		// via NormalizeLifecycleAuthoring below, so this only matters here
+		// when the operator sets it on a non-auction gift.
+		Limited: req.Limited,
 		// The price is the auction's opening bid, so the validator needs it to bound
 		// the bid ladder; see domain.MaxStarGiftAuctionBidStars.
 		Stars: req.Stars,
@@ -3638,8 +3767,10 @@ func (s *Service) ImportStarGift(ctx context.Context, req ImportStarGiftRequest)
 			details["gifts_per_round"] = lifecycle.GiftsPerRound
 			details["auction_start_date"] = lifecycle.AuctionStartDate
 			details["auction_round_duration"] = lifecycle.AuctionRoundDuration
+		}
+		if lifecycle.Limited {
+			details["limited"] = true
 			details["availability_total"] = lifecycle.AvailabilityTotal
-			details["limited"] = lifecycle.Limited
 			details["availability_remains"] = lifecycle.AvailabilityRemains
 		}
 		if lifecycle.LockedUntilDate > 0 {
@@ -3701,8 +3832,14 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		return CommandResult{}, fmt.Errorf("official star gift importer is not configured")
 	}
 	sourceID, err := strconv.ParseInt(strings.TrimSpace(req.SourceGiftID), 10, 64)
-	if err != nil || sourceID <= 0 || req.GiftID < 0 || req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 {
-		return CommandResult{}, domain.ErrStarGiftInvalid
+	if err != nil || sourceID <= 0 {
+		return CommandResult{}, fmt.Errorf("%w: source gift id is required", domain.ErrStarGiftAuthoringInvalid)
+	}
+	if req.GiftID < 0 {
+		return CommandResult{}, fmt.Errorf("%w: gift id must not be negative", domain.ErrStarGiftAuthoringInvalid)
+	}
+	if req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 {
+		return CommandResult{}, fmt.Errorf("%w: sort order out of range", domain.ErrStarGiftAuthoringInvalid)
 	}
 	bundle, err := s.officialGifts.Bundle(ctx, sourceID, req.IncludeCollectible)
 	if err != nil {
@@ -3717,8 +3854,15 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	if req.Stars <= 0 {
 		req.Stars = bundle.Gift.Stars
 	}
-	if req.ConvertStars < 0 || req.ConvertStars > req.Stars || len([]rune(req.Title)) > domain.MaxStarGiftTitleRunes {
-		return CommandResult{}, domain.ErrStarGiftInvalid
+	if req.ConvertStars < 0 {
+		return CommandResult{}, fmt.Errorf("%w: convert stars must not be negative", domain.ErrStarGiftAuthoringInvalid)
+	}
+	if req.ConvertStars > req.Stars {
+		return CommandResult{}, fmt.Errorf("%w: convert stars (%d) exceeds price (%d) in stars",
+			domain.ErrStarGiftAuthoringInvalid, req.ConvertStars, req.Stars)
+	}
+	if len([]rune(req.Title)) > domain.MaxStarGiftTitleRunes {
+		return CommandResult{}, fmt.Errorf("%w: title exceeds %d characters", domain.ErrStarGiftAuthoringInvalid, domain.MaxStarGiftTitleRunes)
 	}
 	if req.UpgradeStars <= 0 {
 		req.UpgradeStars = bundle.Gift.UpgradeStars
@@ -3744,6 +3888,10 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	// schedule. An operator-supplied time therefore wins, and must be in the future
 	// — a past one would publish the gift immediately while reading as scheduled.
 	lockedUntilDate := bundle.Gift.LockedUntilDate
+	if req.Auction && req.LockedUntilDate != 0 {
+		return CommandResult{}, fmt.Errorf("%w: auctions do not use a scheduled-release time",
+			domain.ErrStarGiftLifecycleInvalid)
+	}
 	if req.LockedUntilDate != 0 {
 		if req.LockedUntilDate < 0 || req.LockedUntilDate <= int(s.now().Unix()) {
 			return CommandResult{}, fmt.Errorf("%w: scheduled-release time must be in the future",
@@ -3758,12 +3906,31 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	// the supply check then requires availability_total > 0. Leaving both zero made
 	// every official auction import fail on the INSERT. Carry the snapshot's supply
 	// for that case only, and let the shared normalizer derive the rest.
-	auctionLimited, auctionTotal := false, 0
-	if bundle.Gift.Auction {
-		auctionLimited, auctionTotal = true, bundle.Gift.AvailabilityTotal
-		if auctionTotal <= 0 {
-			auctionTotal = req.SupplyTotal
+	//
+	// req.Auction is the operator-authored override (admin panel's lifecycle
+	// toggle, now available on this import path too, not just the file-upload
+	// one) -- takes precedence over whatever auction state the snapshot itself
+	// happened to carry.
+	// The snapshot itself carries no round-duration concept (that's a purely
+	// local auction-engine parameter, not something Telegram's own gift data
+	// exposes) -- zero only ever matters when req.Auction also sets it below.
+	auctionSlug, giftsPerRound, auctionStartDate, auctionRoundDuration := bundle.Gift.AuctionSlug, bundle.Gift.GiftsPerRound, bundle.Gift.AuctionStartDate, 0
+	supplyLimited, supplyTotal := false, 0
+	if req.Auction {
+		supplyLimited, supplyTotal = true, req.SupplyTotal
+		auctionSlug = strings.ToLower(strings.TrimSpace(req.AuctionSlug))
+		giftsPerRound = req.GiftsPerRound
+		auctionStartDate = req.AuctionStartDate
+		auctionRoundDuration = req.AuctionRoundDuration
+	} else if bundle.Gift.Auction {
+		supplyLimited, supplyTotal = true, bundle.Gift.AvailabilityTotal
+		if supplyTotal <= 0 {
+			supplyTotal = req.SupplyTotal
 		}
+	} else if req.Limited {
+		// Plain "sold X of Y" supply cap, independent of an auction -- see
+		// ImportOfficialStarGiftRequest.Limited's own doc comment.
+		supplyLimited, supplyTotal = true, req.AvailabilityTotal
 	}
 
 	baseAnimation, err := s.gifts.PrepareOfficialAnimation(bundle.BaseDocument.FileName, bundle.BaseDocument.Data)
@@ -3853,23 +4020,32 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		// inventory. Keep the complete source JSON as provenance, while publishing
 		// regular official imports as a fresh, locally purchasable catalog entry.
 		// Local resale counters and sale dates are derived by lifecycle writes.
-		// Auctions are the one exception; see auctionLimited above.
-		Limited: auctionLimited, SoldOut: false, Birthday: bundle.Gift.Birthday,
+		// Auctions are the one exception; see supplyLimited above.
+		Limited: supplyLimited, SoldOut: false, Birthday: bundle.Gift.Birthday,
 		RequirePremium: bundle.Gift.RequirePremium, LimitedPerUser: bundle.Gift.LimitedPerUser,
-		PeerColorAvailable: bundle.Gift.PeerColorAvailable, Auction: bundle.Gift.Auction,
-		AvailabilityRemains: 0, AvailabilityTotal: auctionTotal,
+		PeerColorAvailable: bundle.Gift.PeerColorAvailable, Auction: req.Auction || bundle.Gift.Auction,
+		AvailabilityRemains: 0, AvailabilityTotal: supplyTotal,
 		AvailabilityResale: 0, FirstSaleDate: 0,
 		LastSaleDate: 0, ResellMinStars: 0,
 		PerUserTotal: bundle.Gift.PerUserTotal, LockedUntilDate: lockedUntilDate,
-		AuctionSlug: bundle.Gift.AuctionSlug, GiftsPerRound: bundle.Gift.GiftsPerRound,
-		AuctionStartDate: bundle.Gift.AuctionStartDate, UpgradeVariants: bundle.Gift.UpgradeVariants,
+		AuctionSlug: auctionSlug, GiftsPerRound: giftsPerRound,
+		AuctionStartDate: auctionStartDate, AuctionRoundDuration: auctionRoundDuration, UpgradeVariants: bundle.Gift.UpgradeVariants,
 		Background: background,
 	}, Collectible: collectible}
+	// Operator-authored auction/limited input goes through the same authoring
+	// contract the file-upload path always has -- unlike a snapshot's own
+	// (possibly already-elapsed) auction/schedule state, which legitimately
+	// skips it (see below).
+	if req.Auction || req.Limited {
+		if err := write.Catalog.ValidateLifecycleAuthoring(int(s.now().Unix())); err != nil {
+			return CommandResult{}, err
+		}
+	}
 	// Only auctions are touched: a snapshot auction_start_date may be zero or in the
 	// past, and the revision's CHECK requires it to be positive. The full
-	// ValidateLifecycleAuthoring is deliberately not run here — it is the authoring
-	// contract for operator input, and a snapshot legitimately carries a
-	// locked_until_date that has already elapsed.
+	// ValidateLifecycleAuthoring is deliberately not run here for the snapshot case
+	// — it is the authoring contract for operator input, and a snapshot legitimately
+	// carries a locked_until_date that has already elapsed.
 	write.Catalog.NormalizeLifecycleAuthoring(int(s.now().Unix()))
 	return s.runCommand(ctx, req.CommandMeta, ActionImportOfficialStarGift, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"source_gift_id": req.SourceGiftID, "gift_id": strconv.FormatInt(req.GiftID, 10),
@@ -3890,6 +4066,9 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		if write.Catalog.Auction {
 			details["auction_availability_total"] = write.Catalog.AvailabilityTotal
 			details["auction_start_date"] = write.Catalog.AuctionStartDate
+		} else if write.Catalog.Limited {
+			details["limited"] = true
+			details["availability_total"] = write.Catalog.AvailabilityTotal
 		}
 		if bundle.Collectible != nil {
 			details["models"] = len(bundle.Collectible.Models)
@@ -4049,6 +4228,35 @@ func (s *Service) SetStarGiftSortOrder(ctx context.Context, req SetStarGiftSortO
 		changed, err := s.gifts.SetCatalogSortOrder(ctx, req.GiftID, req.SortOrder)
 		details["changed"] = changed
 		return CommandResult{Message: "star gift order updated", Details: details}, err
+	})
+}
+
+// DeleteStarGift permanently removes a catalog entry, its market listing, its
+// row in this admin panel, and every peer's held copies -- see
+// StarGiftStore.DeleteCatalog's own doc comment for exactly what is kept (the
+// underlying animation/document pack) and why a gift with any upgraded
+// collectible instance is refused outright rather than force-deleted.
+func (s *Service) DeleteStarGift(ctx context.Context, req DeleteStarGiftRequest) (CommandResult, error) {
+	if s == nil || s.gifts == nil || req.GiftID <= 0 {
+		return CommandResult{}, fmt.Errorf("valid star gift and service are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteStarGift, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"gift_id": strconv.FormatInt(req.GiftID, 10)}
+		if req.DryRun {
+			owners, collectibles, err := s.gifts.DeletionPreview(ctx, req.GiftID)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			details["owners_affected"] = owners
+			details["collectible_instances"] = collectibles
+			if collectibles > 0 {
+				return CommandResult{}, domain.ErrStarGiftHasCollectibles
+			}
+			return CommandResult{Message: "star gift deletion validated", Details: details}, nil
+		}
+		owners, err := s.gifts.DeleteCatalog(ctx, req.GiftID)
+		details["owners_affected"] = owners
+		return CommandResult{Message: "star gift deleted permanently", Details: details}, err
 	})
 }
 

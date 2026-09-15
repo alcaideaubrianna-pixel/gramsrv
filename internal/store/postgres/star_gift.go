@@ -61,7 +61,62 @@ ORDER BY c.sort_order, c.gift_id`)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate star gift catalog: %w", err)
 	}
+	if err := s.overlayLiveResaleMinimums(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// overlayLiveResaleMinimums replaces ResellMinStars, for DISPLAY only, with
+// each gift's current cheapest live Stars listing.
+//
+// The stored star_gift_catalog.resell_min_stars column is deliberately NOT
+// this -- see updateStarGiftResaleProjection -- it is an optional per-gift
+// authored listing-price FLOOR (falling back to the platform-wide
+// StarGiftMarketPolicy.ResaleMinStars default), enforced in
+// SetStarGiftListing via its own direct query, untouched by this function.
+// Reusing that same column to also show "today's cheapest ask" on the
+// catalog tile is what real Telegram's client expects (and what the user
+// actually sees as "0 stars" for every gift with resale listings, since the
+// stored column is 0/unauthored for all of them) -- so the two meanings are
+// kept apart: one stored value drives pricing rules, this live query drives
+// what gets rendered.
+func (s *StarGiftStore) overlayLiveResaleMinimums(ctx context.Context, gifts []domain.StarGift) error {
+	giftIDs := make([]int64, 0, len(gifts))
+	for _, g := range gifts {
+		if g.AvailabilityResale > 0 {
+			giftIDs = append(giftIDs, g.ID)
+		}
+	}
+	if len(giftIDs) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT u.gift_id, MIN(l.amount)
+  FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id
+ WHERE u.gift_id=ANY($1::bigint[]) AND l.currency='XTR'
+ GROUP BY u.gift_id`, giftIDs)
+	if err != nil {
+		return fmt.Errorf("live resale minimums: %w", err)
+	}
+	defer rows.Close()
+	liveMin := make(map[int64]int64, len(giftIDs))
+	for rows.Next() {
+		var giftID, minimum int64
+		if err := rows.Scan(&giftID, &minimum); err != nil {
+			return err
+		}
+		liveMin[giftID] = minimum
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range gifts {
+		if minimum, ok := liveMin[gifts[i].ID]; ok {
+			gifts[i].ResellMinStars = minimum
+		}
+	}
+	return nil
 }
 
 func (s *StarGiftStore) CatalogGift(ctx context.Context, giftID int64) (domain.StarGift, bool, error) {
@@ -384,6 +439,145 @@ WHERE gift_id=$1 AND sort_order IS DISTINCT FROM $2`, giftID, sortOrder)
 		return false, domain.ErrStarGiftNotFound
 	}
 	return false, nil
+}
+
+// hasBlockingCollectibles reports whether a gift has anything DeleteCatalog
+// must refuse to touch: an issued unique collectible instance, a published
+// collectible revision, or any auction ever run against it. Issued instances
+// are independent objects that may already be exported on-chain;
+// telesrv_guard_collectible_revision unconditionally forbids deleting or
+// mutating a published revision even with zero issued instances; and an
+// auction's bids/payments are real Stars history, not disposable bookkeeping
+// -- none of these are safe to silently erase via a catalog delete.
+func hasBlockingCollectibles(ctx context.Context, q sqlcgen.DBTX, giftID int64) (instances int, blocked bool, err error) {
+	if err := q.QueryRow(ctx, `SELECT count(*) FROM unique_star_gifts WHERE gift_id=$1`, giftID).Scan(&instances); err != nil {
+		return 0, false, fmt.Errorf("count star gift collectibles: %w", err)
+	}
+	var published bool
+	if err := q.QueryRow(ctx, `
+SELECT EXISTS (SELECT 1 FROM star_gift_collectible_revisions WHERE gift_id=$1 AND status='published')`, giftID).Scan(&published); err != nil {
+		return 0, false, fmt.Errorf("check star gift published collectible revision: %w", err)
+	}
+	var auctioned bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM star_gift_auctions WHERE gift_id=$1)`, giftID).Scan(&auctioned); err != nil {
+		return 0, false, fmt.Errorf("check star gift auction history: %w", err)
+	}
+	return instances, instances > 0 || published || auctioned, nil
+}
+
+// DeletionPreview reports the blast radius of DeleteCatalog without changing
+// anything, so a dry-run can show the operator what a confirm would do
+// (including surfacing the ErrStarGiftHasCollectibles guardrail up front).
+func (s *StarGiftStore) DeletionPreview(ctx context.Context, giftID int64) (ownersAffected int, collectibleInstances int, err error) {
+	var exists bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM star_gift_catalog WHERE gift_id=$1)`, giftID).Scan(&exists); err != nil {
+		return 0, 0, fmt.Errorf("check star gift exists: %w", err)
+	}
+	if !exists {
+		return 0, 0, domain.ErrStarGiftNotFound
+	}
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM peer_star_gifts WHERE gift_id=$1`, giftID).Scan(&ownersAffected); err != nil {
+		return 0, 0, fmt.Errorf("count star gift owners: %w", err)
+	}
+	instances, blocked, err := hasBlockingCollectibles(ctx, s.db, giftID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if blocked {
+		return ownersAffected, instances, domain.ErrStarGiftHasCollectibles
+	}
+	return ownersAffected, instances, nil
+}
+
+// DeleteCatalog permanently removes a gift from the catalog, the market and
+// every peer's holdings -- everything except the immutable, content-addressed
+// animation/document assets (those are shared by hash and are left for the
+// blob store's own lifecycle). It refuses via hasBlockingCollectibles
+// (ErrStarGiftHasCollectibles) when the gift has any issued unique
+// collectible or published collectible revision -- a blanket delete would
+// either strip an independent, possibly on-chain object out from under its
+// owner, or hit telesrv_guard_collectible_revision's own immutability trigger.
+func (s *StarGiftStore) DeleteCatalog(ctx context.Context, giftID int64) (ownersAffected int, err error) {
+	err = withTx(ctx, s.db, "delete star gift catalog", func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM star_gift_catalog WHERE gift_id=$1)`, giftID).Scan(&exists); err != nil {
+			return fmt.Errorf("check star gift exists: %w", err)
+		}
+		if !exists {
+			return domain.ErrStarGiftNotFound
+		}
+		_, blocked, err := hasBlockingCollectibles(ctx, tx, giftID)
+		if err != nil {
+			return err
+		}
+		if blocked {
+			return domain.ErrStarGiftHasCollectibles
+		}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM peer_star_gifts WHERE gift_id=$1`, giftID).Scan(&ownersAffected); err != nil {
+			return fmt.Errorf("count star gift owners: %w", err)
+		}
+		// Command/audit rows that carry their own gift_id column directly --
+		// idempotency and per-user quota bookkeeping, not an authoritative
+		// Stars ledger (that lives on the user's own balance, untouched here).
+		// star_gift_auction_acquired is not listed: hasBlockingCollectibles
+		// already guarantees zero star_gift_auctions rows, and every acquired
+		// row requires one, so it is already empty.
+		for _, stmt := range []string{
+			`DELETE FROM star_gift_craft_commands WHERE gift_id=$1`,
+			`DELETE FROM star_gift_purchase_commands WHERE gift_id=$1`,
+			`DELETE FROM star_gift_user_purchases WHERE gift_id=$1`,
+			`DELETE FROM star_gift_purchase_forms WHERE gift_id=$1`,
+		} {
+			if _, err := tx.Exec(ctx, stmt, giftID); err != nil {
+				return fmt.Errorf("delete star gift gift-scoped row: %w", err)
+			}
+		}
+		// Command/audit rows addressed by saved_gift_id (a peer_star_gifts row
+		// id) rather than gift_id directly -- must run before peer_star_gifts
+		// itself is deleted. star_gift_upgrade_commands/drop_details_commands/
+		// admin_grant_commands are defensive: hasBlockingCollectibles already
+		// guarantees zero unique_star_gifts rows, and each of those tables
+		// requires a valid unique_gift_id, so they should already be empty.
+		for _, stmt := range []string{
+			`DELETE FROM star_gift_conversions WHERE saved_gift_id IN (SELECT id FROM peer_star_gifts WHERE gift_id=$1)`,
+			`DELETE FROM star_gift_prepaid_upgrade_commands WHERE saved_gift_id IN (SELECT id FROM peer_star_gifts WHERE gift_id=$1)`,
+			`DELETE FROM star_gift_upgrade_commands WHERE source_saved_gift_id IN (SELECT id FROM peer_star_gifts WHERE gift_id=$1)`,
+			`DELETE FROM star_gift_drop_details_commands WHERE saved_gift_id IN (SELECT id FROM peer_star_gifts WHERE gift_id=$1)`,
+			`DELETE FROM star_gift_admin_grant_commands WHERE saved_gift_id IN (SELECT id FROM peer_star_gifts WHERE gift_id=$1)`,
+		} {
+			if _, err := tx.Exec(ctx, stmt, giftID); err != nil {
+				return fmt.Errorf("delete star gift peer-scoped row: %w", err)
+			}
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM peer_star_gifts WHERE gift_id=$1`, giftID); err != nil {
+			return fmt.Errorf("delete star gift owner copies: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM star_gift_collectible_preview_repairs WHERE gift_id=$1`, giftID); err != nil {
+			return fmt.Errorf("delete star gift collectible preview repairs: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM star_gift_collectible_revisions WHERE gift_id=$1`, giftID); err != nil {
+			return fmt.Errorf("delete star gift collectible revisions: %w", err)
+		}
+		// star_gift_catalog.active_revision_id -> star_gift_catalog_revisions
+		// and star_gift_catalog_revisions.gift_id -> star_gift_catalog are a
+		// mutual ON DELETE RESTRICT pair. RESTRICT is checked immediately even
+		// on a DEFERRABLE INITIALLY DEFERRED constraint (unlike NO ACTION), so
+		// deleting either row first, in its own statement, always fails.
+		// Deleting both within a single data-modifying-CTE statement runs the
+		// row operations together before either RESTRICT trigger fires,
+		// satisfying both sides at once.
+		if _, err := tx.Exec(ctx, `
+WITH del_rev AS (DELETE FROM star_gift_catalog_revisions WHERE gift_id=$1),
+     del_cat AS (DELETE FROM star_gift_catalog WHERE gift_id=$1)
+SELECT 1`, giftID); err != nil {
+			return fmt.Errorf("delete star gift catalog and revisions: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return ownersAffected, nil
 }
 
 func (s *StarGiftStore) AnimationJSON(ctx context.Context, giftID int64) ([]byte, bool, error) {

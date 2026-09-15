@@ -350,6 +350,13 @@ func tgMessageActionStarGiftUnique(action *domain.MessageStarGiftUniqueAction) t
 // the sender's mirror service message. Without this projection the sender sees
 // actions such as "remove original details" and submits a slug that correctly
 // belongs to the recipient, which then fails with PEER_ID_INVALID.
+//
+// ResaleAmount is deliberately NOT stripped: it is the completed sale's price,
+// a historical fact both the buyer and the seller need to see ("sold for X"),
+// not a forward-looking owner-only capability like the fields below. Stripping
+// it here used to leave the seller's own copy of the sale message with no
+// price at all, which -- combined with Transferred still being set -- renders
+// as a plain "transferred the gift" instead of "sold for X stars/TON".
 func tgMessageActionStarGiftUniqueForViewer(action *domain.MessageStarGiftUniqueAction, viewerUserID int64) tg.MessageActionClass {
 	if action == nil || viewerUserID <= 0 || action.Gift.Owner.Type != domain.PeerTypeUser ||
 		action.Gift.Owner.ID == viewerUserID {
@@ -358,7 +365,6 @@ func tgMessageActionStarGiftUniqueForViewer(action *domain.MessageStarGiftUnique
 	projected := *action
 	projected.CanExportAt = 0
 	projected.TransferStars = 0
-	projected.ResaleAmount = nil
 	projected.CanTransferAt = 0
 	projected.CanResellAt = 0
 	projected.DropOriginalDetailsStars = 0

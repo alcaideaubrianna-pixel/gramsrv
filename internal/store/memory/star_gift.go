@@ -193,6 +193,31 @@ func (s *StarGiftStore) SetCatalogSortOrder(_ context.Context, giftID int64, sor
 	return changed, nil
 }
 
+// DeleteCatalog and DeletionPreview are a minimal fake for tests that don't
+// exercise the delete flow itself: this store never tracked peer ownership
+// or collectible instances, so there is nothing to count or guard here.
+func (s *StarGiftStore) DeleteCatalog(_ context.Context, giftID int64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.catalog[giftID]; !ok {
+		return 0, domain.ErrStarGiftNotFound
+	}
+	delete(s.catalog, giftID)
+	delete(s.enabled, giftID)
+	delete(s.sortOrder, giftID)
+	delete(s.animations, giftID)
+	return 0, nil
+}
+
+func (s *StarGiftStore) DeletionPreview(_ context.Context, giftID int64) (int, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.catalog[giftID]; !ok {
+		return 0, 0, domain.ErrStarGiftNotFound
+	}
+	return 0, 0, nil
+}
+
 func (s *StarGiftStore) AnimationJSON(_ context.Context, giftID int64) ([]byte, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

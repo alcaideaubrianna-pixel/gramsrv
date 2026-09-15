@@ -59,6 +59,9 @@ var (
 	ErrUsernameOrderInvalid = errors.New("username order invalid")
 	// ErrCollectibleCurrencyInvalid rejects an unsupported purchase currency.
 	ErrCollectibleCurrencyInvalid = errors.New("collectible currency invalid")
+	// ErrCollectibleUsernameNotForSale rejects a public purchase of an asset that
+	// is not sitting in the vault, or has no priced Currency/Amount recorded.
+	ErrCollectibleUsernameNotForSale = errors.New("collectible username not for sale")
 )
 
 // Purchase currencies recorded on a collectible asset. XTR is Stars, TON is the
@@ -541,6 +544,30 @@ func (r MintCollectibleUsernameRequest) Validate() error {
 	return nil
 }
 
+// UpdateCollectibleUsernamePriceRequest reprices a vault or owned asset's
+// fragment.collectibleInfo card without touching ownership -- the admin-panel
+// counterpart of PurchaseCollectibleUsernameRequest's read side, and the
+// mechanism that makes a vault item's Currency/Amount actually
+// admin-adjustable after the mint that first set it. Mirrors
+// UpdateCollectiblePhonePriceRequest.
+type UpdateCollectibleUsernamePriceRequest struct {
+	Username       string
+	Currency       string
+	Amount         int64
+	CryptoCurrency string
+	CryptoAmount   int64
+	Actor          string
+	Reason         string
+}
+
+func (r UpdateCollectibleUsernamePriceRequest) Validate() error {
+	if !ValidCollectibleUsername(r.Username) || len(r.Actor) > MaxCollectibleUsernameActorLength ||
+		len(r.Reason) > MaxCollectibleUsernameReasonLength {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	return ValidateCollectibleAmounts(r.Currency, r.Amount, r.CryptoCurrency, r.CryptoAmount)
+}
+
 // TransferCollectibleUsernameRequest moves an asset between peers, or out of the
 // vault when the asset is unowned.
 type TransferCollectibleUsernameRequest struct {
@@ -557,6 +584,40 @@ func (r TransferCollectibleUsernameRequest) Validate() error {
 		return ErrUsernameInvalid
 	}
 	if !validCollectibleOwner(r.To) {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	if len(r.Reason) > MaxCollectibleUsernameReasonLength {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	if len(r.Actor) > MaxCollectibleUsernameActorLength {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	if len(r.CommandKey) > MaxCollectibleUsernameCommandKeyLength {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	return nil
+}
+
+// PurchaseCollectibleUsernameRequest buys a vault-held (unowned) collectible
+// username at the price already recorded on the asset (its Currency/Amount,
+// set at mint time) -- the public, self-service equivalent of an admin
+// TransferCollectibleUsernameRequest out of the vault, exactly like
+// fragment.com's buy flow. The store debits Buyer's balance in that currency
+// before moving ownership; see ErrCollectibleUsernameNotForSale.
+type PurchaseCollectibleUsernameRequest struct {
+	Username   string
+	Buyer      Peer
+	Actor      string
+	Reason     string
+	CommandKey string
+}
+
+// Validate checks the request shape.
+func (r PurchaseCollectibleUsernameRequest) Validate() error {
+	if !ValidCollectibleUsername(r.Username) {
+		return ErrUsernameInvalid
+	}
+	if !validCollectibleOwner(r.Buyer) {
 		return ErrCollectibleUsernameStateInvalid
 	}
 	if len(r.Reason) > MaxCollectibleUsernameReasonLength {

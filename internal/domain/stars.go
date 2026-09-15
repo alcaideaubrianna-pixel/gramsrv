@@ -118,6 +118,10 @@ const (
 	StarsReasonPremium       StarsTransactionReason = "premium"
 	StarsReasonWithdrawal    StarsTransactionReason = "withdrawal"
 	StarsReasonAdjust        StarsTransactionReason = "adjust" // 兜底/人工调整
+	// StarsReasonCollectible 购买一个 vault 中的收藏用户名/号码（Fragment 式市场）。
+	StarsReasonCollectible StarsTransactionReason = "collectible"
+	// StarsReasonWalletTransfer 是钱包里用户之间任意的点对点转账（目前仅 TON 账本使用）。
+	StarsReasonWalletTransfer StarsTransactionReason = "wallet_transfer"
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。

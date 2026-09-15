@@ -168,7 +168,7 @@ func (s *StarGiftTONFinalizerStore) FinalizeTONExport(ctx context.Context, final
 		unique.ExternalizationPending = false
 		unique.CraftChancePermille = 0
 		unique.ResellAmount = nil
-		if _, err := s.lifecycle.retireUserStarGiftMessagesTx(ctx, tx, saved, unique,
+		if _, err := s.lifecycle.retireUserStarGiftMessagesTx(ctx, tx, nil, saved, unique,
 			lockScope.Projection, finalization.FinalizedAt); err != nil {
 			return err
 		}

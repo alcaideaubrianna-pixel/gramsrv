@@ -1,4 +1,4 @@
-import { CheckCircle2, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { CheckCircle2, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -13,10 +13,25 @@ import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 type OfficialGiftCategory = "all" | "upgrade" | "craft" | "basic";
 
 // "auction" runs the gift through the timed-round bidding engine; "drop" keeps it
-// locked behind a countdown until locked_until_date passes. An auction needs an
-// animation of its own, so it is authored on the upload path only; a drop is just a
-// release time and applies to a snapshot import as well.
+// locked behind a countdown until locked_until_date passes. Both apply to either
+// import source (file upload or an official/snapshot import) -- an official
+// import's own animation/collectible pool comes from the snapshot either way, so
+// nothing about auction authoring actually needs the upload path specifically.
 type LifecycleMode = "regular" | "auction" | "drop";
+
+// slugify mirrors the server's own lowercasing: the public link prefix should
+// equal the display name, with spaces turned into "-" so the link never breaks.
+// Anything that isn't alphanumeric/"-" is stripped the same way a URL path
+// segment would need to be.
+function slugify(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
 
 function officialGiftAttributeCount(gift: OfficialStarGiftRow) {
   return gift.model_count + gift.pattern_count + gift.backdrop_count;
@@ -102,6 +117,18 @@ export function GiftsPage() {
   const [upgradeStars, setUpgradeStars] = useState("0");
   const [supplyTotal, setSupplyTotal] = useState("0");
   const [slugPrefix, setSlugPrefix] = useState("");
+  // Tracks whether the operator has typed into a slug field themselves --
+  // once they have, the auto-derive-from-title effect below stops
+  // overwriting it. Reset on every fresh import/revision start.
+  const [slugPrefixTouched, setSlugPrefixTouched] = useState(false);
+  const [auctionSlugTouched, setAuctionSlugTouched] = useState(false);
+  // Limited: real Telegram's plain "sold X of Y" supply bar on a gift --
+  // separate from the auction's own supply and from the collectible
+  // unique-tirage pool size above (supplyTotal), though it defaults to that
+  // same number until the operator overrides it (see the sync effect below).
+  const [limited, setLimited] = useState(false);
+  const [limitedSupply, setLimitedSupply] = useState("0");
+  const [limitedSupplyTouched, setLimitedSupplyTouched] = useState(false);
 	const [giftID, setGiftID] = useState("0");
   const [title, setTitle] = useState("");
   const [stars, setStars] = useState("50");
@@ -113,11 +140,7 @@ export function GiftsPage() {
   const [giftsPerRound, setGiftsPerRound] = useState("1");
   const [roundDuration, setRoundDuration] = useState("3600");
   const [auctionStartAt, setAuctionStartAt] = useState("");
-  const [unlockAt, setUnlockAt] = useState("");
-  // The snapshot path carries its own scheduling state: the mode selector above
-  // belongs to the upload form, and an official gift cannot be auctioned here.
-  const [officialScheduled, setOfficialScheduled] = useState(false);
-  const [officialUnlockAt, setOfficialUnlockAt] = useState(() => localInputValue(3600));
+  const [unlockAt, setUnlockAt] = useState(() => localInputValue(3600));
   const [enabled, setEnabled] = useState(true);
   const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<CommandResult | null>(null);
@@ -135,6 +158,21 @@ export function GiftsPage() {
   }
 
   useEffect(() => { void load(); }, []);
+
+  // Public link prefix (slug) equals the display name, spaces turned into
+  // "-" so the link never breaks -- keeps both slug fields in sync with the
+  // title as it's typed, unless the operator has edited a slug by hand.
+  useEffect(() => {
+    const derived = slugify(title);
+    if (!slugPrefixTouched) setSlugPrefix(derived);
+    if (!auctionSlugTouched) setAuctionSlug(derived);
+  }, [title, slugPrefixTouched, auctionSlugTouched]);
+
+  // Limited's supply defaults to the unique-tirage field (supplyTotal) --
+  // the two are often the same number in practice -- but stays editable.
+  useEffect(() => {
+    if (!limitedSupplyTouched) setLimitedSupply(supplyTotal);
+  }, [supplyTotal, limitedSupplyTouched]);
 
   useEffect(() => {
     if (!importOpen || importSource !== "official" || officialGifts.length > 0) return;
@@ -204,9 +242,22 @@ export function GiftsPage() {
     if (lifecycleMode === "drop") {
       const unlock = toUnixSeconds(unlockAt);
       if (unlock <= now) throw new Error(t("gifts.lifecycle.unlockRequired"));
-      return { locked_until_date: unlock };
+      return { locked_until_date: unlock, ...limitedPayload() };
     }
-    return {};
+    return { ...limitedPayload() };
+  }
+
+  // Limited: real Telegram's own "sold X of Y" supply bar on a gift -- a
+  // separate authoring surface from an auction's own supply (which already
+  // implies Limited server-side) and from the collectible unique-tirage
+  // pool. Offered on both regular and drop -- a gift does not need a
+  // scheduled unlock to carry a fixed sellable quantity. Not offered on
+  // auction, whose own supply already implies Limited server-side.
+  function limitedPayload() {
+    if (!limited) return {};
+    const total = Number(limitedSupply);
+    if (!(total > 0)) throw new Error(t("gifts.lifecycle.limitedSupplyRequired"));
+    return { limited: true, availability_total: total };
   }
 
   function uploadForm(confirm: boolean, commandID = "") {
@@ -232,21 +283,53 @@ export function GiftsPage() {
   function officialPayload(confirm: boolean, commandID = "") {
     if (!sourceGiftID) throw new Error(t("gifts.officialRequired"));
     if (!reason.trim()) throw new Error(t("action.reasonRequired"));
-    // A snapshot import can be scheduled but not auctioned: an auction needs its own
-    // supply and animation, which is the upload path. Sending 0 keeps whatever
-    // release time the snapshot itself carries.
+    const now = Math.floor(Date.now() / 1000);
+    // Same lifecycle authoring as the upload path (see lifecyclePayload) -- an
+    // official import's supply_total field doubles as the auction's
+    // availability_total server-side (ImportOfficialStarGiftRequest has no
+    // separate field for it, matching how the snapshot's own supply already
+    // works), so the auction branch overrides supply_total instead of sending
+    // a second, differently-named quantity.
     let lockedUntil = 0;
-    if (officialScheduled) {
-      lockedUntil = toUnixSeconds(officialUnlockAt);
-      if (lockedUntil <= Math.floor(Date.now() / 1000)) throw new Error(t("gifts.lifecycle.unlockRequired"));
+    let auctionFields: Record<string, unknown> = {};
+    let supplyTotalOverride = Number(supplyTotal);
+    if (lifecycleMode === "auction") {
+      const supply = Number(auctionSupply);
+      const perRound = Number(giftsPerRound);
+      const duration = Number(roundDuration);
+      const startDate = toUnixSeconds(auctionStartAt);
+      if (!auctionSlug.trim()) throw new Error(t("gifts.lifecycle.slugRequired"));
+      if (!(supply > 0)) throw new Error(t("gifts.lifecycle.supplyRequired"));
+      if (!(perRound > 0)) throw new Error(t("gifts.lifecycle.perRoundRequired"));
+      if (perRound > supply) throw new Error(t("gifts.lifecycle.perRoundTooLarge"));
+      if (!(duration > 0)) throw new Error(t("gifts.lifecycle.roundDurationRequired"));
+      if (startDate !== 0 && startDate < now) throw new Error(t("gifts.lifecycle.startPast"));
+      supplyTotalOverride = supply;
+      auctionFields = {
+        auction: true, auction_slug: auctionSlug.trim().toLowerCase(),
+        gifts_per_round: perRound, auction_round_duration: duration, auction_start_date: startDate
+      };
+    } else if (lifecycleMode === "drop") {
+      lockedUntil = toUnixSeconds(unlockAt);
+      if (lockedUntil <= now) throw new Error(t("gifts.lifecycle.unlockRequired"));
     }
+    // See limitedPayload() above -- offered on regular and drop, not auction.
+    const limitedFields = lifecycleMode !== "auction" && limited
+      ? (() => {
+          const total = Number(limitedSupply);
+          if (!(total > 0)) throw new Error(t("gifts.lifecycle.limitedSupplyRequired"));
+          return { limited: true, availability_total: total };
+        })()
+      : {};
     return {
       command_id: commandID, reason: reason.trim(), confirm,
 		source_gift_id: sourceGiftID, gift_id: giftID, title: title.trim(),
 		stars, convert_stars: convertStars, enabled, sort_order: Number(sortOrder),
 		include_collectible: includeCollectible, upgrade_stars: upgradeStars,
-      supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim().toLowerCase(),
-      locked_until_date: lockedUntil
+      ...limitedFields,
+      supply_total: supplyTotalOverride, slug_prefix: slugPrefix.trim().toLowerCase(),
+      locked_until_date: lockedUntil,
+      ...auctionFields
     };
   }
 
@@ -258,7 +341,13 @@ export function GiftsPage() {
     setIncludeCollectible(gift.can_upgrade);
 		setUpgradeStars(gift.upgrade_stars);
 		setSupplyTotal(String(gift.availability_total > 0 ? gift.availability_total : Math.max(gift.upgrade_variants, 1)));
-    setSlugPrefix(`official-${gift.source_gift_id}`);
+    // Slug follows the display name (see the title-sync effect above) --
+    // only fall back to the old official-<id> shape if the title itself is
+    // empty, so the link is never blank.
+    setSlugPrefixTouched(false);
+    setAuctionSlugTouched(false);
+    setLimitedSupplyTouched(false);
+    setSlugPrefix(slugify(gift.title) || `official-${gift.source_gift_id}`);
     setPreview(null);
   }
 
@@ -288,6 +377,7 @@ export function GiftsPage() {
   function startImport() {
 	setGiftID("0"); setTitle(""); setStars("50"); setConvertStars("50"); setSortOrder("0");
     setEnabled(true); setReason(""); setFile(null); setPreview(null); setImportError("");
+    setLifecycleMode("regular"); setSlugPrefixTouched(false); setAuctionSlugTouched(false); setLimited(false); setLimitedSupplyTouched(false);
     setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
   }
 
@@ -295,6 +385,7 @@ export function GiftsPage() {
     setGiftID(gift.GiftID); setTitle(gift.Title); setStars(String(gift.Stars));
     setConvertStars(String(gift.ConvertStars)); setSortOrder(String(gift.SortOrder)); setEnabled(gift.Enabled);
     setReason(""); setFile(null); setPreview(null); setImportError("");
+    setLifecycleMode("regular"); setSlugPrefixTouched(false); setAuctionSlugTouched(false); setLimited(false); setLimitedSupplyTouched(false);
     setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
   }
 
@@ -328,9 +419,13 @@ export function GiftsPage() {
                 <td><strong className="gift-table-price">⭐ {gift.Stars}</strong><span className="gift-convert-price">→ {gift.ConvertStars}</span></td>
                 <td><Badge>{gift.SourceFormat}</Badge><span className="gift-source-size">{formatBytes(gift.AnimationSize)}</span></td>
                 <td>{gift.ReceivedCount}</td>
-                <td><Badge tone={gift.Enabled ? "good" : "neutral"}>{gift.Enabled ? t("common.enabled") : t("common.disabled")}</Badge></td>
+                <td>
+                  <Badge tone={gift.Enabled ? "good" : "neutral"}>{gift.Enabled ? t("common.enabled") : t("common.disabled")}</Badge>
+                  {gift.SoldOut && <Badge tone="warn">{t("gifts.soldOut")}</Badge>}
+                  {gift.Limited && <div className="gift-supply-status">{t("gifts.supplyStatus", { remains: gift.AvailabilityRemains, total: gift.AvailabilityTotal })}</div>}
+                </td>
                 <td>{formatDate(gift.UpdatedAt)}</td>
-                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} /></div></td>
+                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} />{gift.SoldOut && gift.Enabled && <span title={t("gifts.hideSoldOutHint")}><ActionButton compact tone="warn" icon={<Trash2 size={13} />} label={t("gifts.hideSoldOut")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: false })} onDone={() => void load()} /></span>}<ActionButton compact tone="danger" icon={<Trash2 size={13} />} label={t("gifts.delete")} path="/api/actions/delete-gift" payload={() => ({ gift_id: gift.GiftID })} onDone={() => void load()} /></div></td>
               </tr>
             ))}
             {visibleGifts.length === 0 && <EmptyRow colSpan={9} />}
@@ -399,7 +494,7 @@ export function GiftsPage() {
                   {includeCollectible && <div className="gift-fields-grid">
                     <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
-                    <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); setPreview(null); }} /></label>
+                    <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(slugify(e.target.value)); setSlugPrefixTouched(true); setPreview(null); }} /></label>
                   </div>}
                 </>}
               </section> : <>
@@ -417,7 +512,7 @@ export function GiftsPage() {
                 <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
               </div>
-              {importSource === "file" ? <section className="gift-lifecycle">
+              <section className="gift-lifecycle">
                 <span className="gift-field-label">{t("gifts.lifecycle.label")}</span>
                 <div className="gift-source-tabs" role="group" aria-label={t("gifts.lifecycle.label")}>
                   {(["regular", "auction", "drop"] as const).map((mode) => (
@@ -430,7 +525,7 @@ export function GiftsPage() {
                 <div className="gift-import-note"><span>{lifecycleMode === "auction" ? t("gifts.lifecycle.hintAuction") : lifecycleMode === "drop" ? t("gifts.lifecycle.hintDrop") : t("gifts.lifecycle.hintRegular")}</span></div>
                 {lifecycleMode === "auction" && <>
                   <div className="gift-fields-grid">
-                    <label><span>{t("gifts.auction.slug")}</span><input value={auctionSlug} maxLength={48} placeholder={t("gifts.auction.slugPlaceholder")} onChange={(e) => { setAuctionSlug(e.target.value.toLowerCase()); setPreview(null); }} /></label>
+                    <label><span>{t("gifts.auction.slug")}</span><input value={auctionSlug} maxLength={48} placeholder={t("gifts.auction.slugPlaceholder")} onChange={(e) => { setAuctionSlug(e.target.value.toLowerCase()); setAuctionSlugTouched(true); setPreview(null); }} /></label>
                     <label><span>{t("gifts.auction.supply")}</span><input type="number" min="1" value={auctionSupply} onChange={(e) => { setAuctionSupply(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("gifts.auction.perRound")}</span><input type="number" min="1" value={giftsPerRound} onChange={(e) => { setGiftsPerRound(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("gifts.auction.roundDuration")}</span><input type="number" min="1" value={roundDuration} onChange={(e) => { setRoundDuration(e.target.value); setPreview(null); }} /></label>
@@ -438,20 +533,18 @@ export function GiftsPage() {
                   </div>
                   {auctionRounds > 0 && <div className="gift-import-note"><span>{t("gifts.auction.plan", { rounds: auctionRounds, perRound: Number(giftsPerRound), minutes: Math.max(1, Math.round(Number(roundDuration) / 60)) })}</span></div>}
                 </>}
-                {lifecycleMode === "drop" && <div className="gift-fields-grid">
-                  <label><span>{t("gifts.drop.unlockAt")}</span><input type="datetime-local" value={unlockAt} onChange={(e) => { setUnlockAt(e.target.value); setPreview(null); }} /></label>
-                </div>}
-              </section> : <section className="gift-lifecycle">
-                <span className="gift-field-label">{t("gifts.lifecycle.label")}</span>
-                <div className="gift-import-note"><span>{t("gifts.lifecycle.auctionFileOnly")}</span></div>
-                <label className="gift-switch"><input type="checkbox" checked={officialScheduled} onChange={(e) => { setOfficialScheduled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.drop.schedule")}</span></label>
-                {officialScheduled && <>
-                  <div className="gift-import-note"><span>{t("gifts.lifecycle.hintDrop")}</span></div>
+                {lifecycleMode === "drop" && <>
                   <div className="gift-fields-grid">
-                    <label><span>{t("gifts.drop.unlockAt")}</span><input type="datetime-local" value={officialUnlockAt} onChange={(e) => { setOfficialUnlockAt(e.target.value); setPreview(null); }} /></label>
+                    <label><span>{t("gifts.drop.unlockAt")}</span><input type="datetime-local" value={unlockAt} onChange={(e) => { setUnlockAt(e.target.value); setPreview(null); }} /></label>
                   </div>
                 </>}
-              </section>}
+                {lifecycleMode !== "auction" && <>
+                  <label className="gift-switch"><input type="checkbox" checked={limited} onChange={(e) => { setLimited(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.limited.toggle")}</span></label>
+                  {limited && <div className="gift-fields-grid">
+                    <label><span>{t("gifts.limited.supply")}</span><input type="number" min="1" value={limitedSupply} onChange={(e) => { setLimitedSupply(e.target.value); setLimitedSupplyTouched(true); setPreview(null); }} /></label>
+                  </div>}
+                </>}
+              </section>
               <label className="gift-reason-field"><span>{t("gifts.reason")}</span><input value={reason} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setReason(e.target.value)} /></label>
               <label className="gift-switch"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.enableAfterImport")}</span></label>
               {importError && <Alert>{importError}</Alert>}

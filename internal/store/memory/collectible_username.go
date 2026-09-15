@@ -467,6 +467,63 @@ func (s *CollectibleUsernameStore) MintCollectibleUsername(_ context.Context, re
 	return asset, true, nil
 }
 
+// UpdateCollectibleUsernamePrice reprices an asset's fragment.collectibleInfo
+// card without touching ownership, mirroring the PostgreSQL implementation.
+func (s *CollectibleUsernameStore) UpdateCollectibleUsernamePrice(_ context.Context, req domain.UpdateCollectibleUsernamePriceRequest) (domain.CollectibleUsername, bool, error) {
+	req.Username = domain.NormalizeUsername(req.Username)
+	if err := req.Validate(); err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	asset, err := s.assetByNameLocked(req.Username)
+	if err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	if asset.Status == domain.CollectibleUsernameStatusBurned {
+		return domain.CollectibleUsername{}, false, domain.ErrCollectibleUsernameBurned
+	}
+	if asset.Currency == req.Currency && asset.Amount == req.Amount &&
+		asset.CryptoCurrency == req.CryptoCurrency && asset.CryptoAmount == req.CryptoAmount {
+		return asset, false, nil
+	}
+	asset.Currency = req.Currency
+	asset.Amount = req.Amount
+	asset.CryptoCurrency = req.CryptoCurrency
+	asset.CryptoAmount = req.CryptoAmount
+	asset.Version++
+	asset.UpdatedAt = time.Now().UTC()
+	if err := asset.Validate(); err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	s.assets[asset.ID] = asset
+	return asset, true, nil
+}
+
+func (s *CollectibleUsernameStore) UpdateCollectibleUsernamePriceWithDelivery(ctx context.Context, req domain.UpdateCollectibleUsernamePriceRequest, effects storepkg.DeliveryEffectsBuilder[storepkg.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, bool, error) {
+	if s == nil || effects == nil {
+		return domain.CollectibleUsername{}, false, storepkg.ErrDeliveryOutboxRequired
+	}
+	if s.users != nil {
+		s.users.mu.Lock()
+		defer s.users.mu.Unlock()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := s.cloneLocked()
+	asset, changed, err := candidate.UpdateCollectibleUsernamePrice(ctx, req)
+	if err != nil || !changed {
+		return asset, changed, err
+	}
+	if asset.Owner.Type != "" {
+		if err := s.applyUsernameDeliveryLocked(ctx, []domain.Peer{asset.Owner}, effects); err != nil {
+			return domain.CollectibleUsername{}, false, err
+		}
+	}
+	s.commitCloneLocked(candidate)
+	return asset, true, nil
+}
+
 // TransferCollectibleUsername moves the asset out of the vault or between
 // holders. Handing the asset to the peer that already holds it is a no-op.
 func (s *CollectibleUsernameStore) TransferCollectibleUsername(_ context.Context, req domain.TransferCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error) {
@@ -526,6 +583,71 @@ func (s *CollectibleUsernameStore) TransferCollectibleUsername(_ context.Context
 		CreatedAt:     now,
 	})
 	return asset, true, nil
+}
+
+// PurchaseCollectibleUsername is the in-memory fake's simplified public buy: it
+// enforces the same for-sale preconditions PostgreSQL's PurchaseCollectibleUsername
+// does (vault-held, priced in a spendable currency) and otherwise moves
+// ownership exactly like TransferCollectibleUsername. It never touches a
+// balance store -- this fake has none to touch -- so callers that need
+// insufficient-funds behaviour exercise the PostgreSQL integration tests
+// instead, where the real ledger debit lives.
+func (s *CollectibleUsernameStore) PurchaseCollectibleUsername(_ context.Context, req domain.PurchaseCollectibleUsernameRequest) (domain.CollectibleUsername, error) {
+	req.Username = domain.NormalizeUsername(req.Username)
+	if err := req.Validate(); err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if asset, ok := s.replayLocked(req.CommandKey); ok {
+		return asset, nil
+	}
+	asset, err := s.assetByNameLocked(req.Username)
+	if err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	if asset.Status != domain.CollectibleUsernameStatusVault {
+		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameNotForSale
+	}
+	switch asset.Currency {
+	case domain.CollectibleCurrencyStars, domain.CollectibleCurrencyTON:
+	default:
+		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameNotForSale
+	}
+	if asset.Amount <= 0 {
+		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameNotForSale
+	}
+	if s.countCollectiblesLocked(req.Buyer) >= domain.MaxPeerCollectibleUsernames {
+		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameLimit
+	}
+	now := time.Now().UTC()
+	asset.Status = domain.CollectibleUsernameStatusOwned
+	asset.Owner = req.Buyer
+	if asset.OriginalOwner.Type == "" {
+		asset.OriginalOwner = req.Buyer
+	}
+	asset.PurchaseDate = now
+	asset.TransferCount++
+	asset.Version++
+	asset.UpdatedAt = now
+	if err := asset.Validate(); err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	s.assets[asset.ID] = asset
+	s.detachLocked(asset.ID)
+	s.attachLocked(asset, req.Buyer)
+	s.recordTransferLocked(domain.CollectibleUsernameTransfer{
+		CollectibleID: asset.ID,
+		Kind:          domain.CollectibleUsernameKindTransfer,
+		To:            req.Buyer,
+		Currency:      asset.Currency,
+		Amount:        asset.Amount,
+		Actor:         req.Actor,
+		Reason:        req.Reason,
+		CommandKey:    req.CommandKey,
+		CreatedAt:     now,
+	})
+	return asset, nil
 }
 
 // RevokeCollectibleUsername returns the asset to the vault, or burns it.
@@ -737,6 +859,28 @@ func (s *CollectibleUsernameStore) TransferCollectibleUsernameWithDelivery(ctx c
 	}
 	s.commitCloneLocked(candidate)
 	return asset, true, nil
+}
+
+func (s *CollectibleUsernameStore) PurchaseCollectibleUsernameWithDelivery(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest, effects storepkg.DeliveryEffectsBuilder[storepkg.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, error) {
+	if s == nil || effects == nil {
+		return domain.CollectibleUsername{}, storepkg.ErrDeliveryOutboxRequired
+	}
+	if s.users != nil {
+		s.users.mu.Lock()
+		defer s.users.mu.Unlock()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := s.cloneLocked()
+	asset, err := candidate.PurchaseCollectibleUsername(ctx, req)
+	if err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	if err := s.applyUsernameDeliveryLocked(ctx, []domain.Peer{asset.Owner}, effects); err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	s.commitCloneLocked(candidate)
+	return asset, nil
 }
 
 func (s *CollectibleUsernameStore) RevokeCollectibleUsernameWithDelivery(ctx context.Context, req domain.RevokeCollectibleUsernameRequest, effects storepkg.DeliveryEffectsBuilder[storepkg.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, bool, error) {

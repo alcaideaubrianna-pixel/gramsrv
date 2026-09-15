@@ -109,6 +109,7 @@ type fakeCollectibles struct {
 	assets    map[string]domain.CollectibleUsername
 	mints     []domain.MintCollectibleUsernameRequest
 	transfers []domain.TransferCollectibleUsernameRequest
+	purchases []domain.PurchaseCollectibleUsernameRequest
 	revokes   []domain.RevokeCollectibleUsernameRequest
 	deletes   []domain.DeleteCollectibleUsernameRequest
 	filters   []domain.CollectibleUsernameFilter
@@ -136,6 +137,21 @@ func (f *fakeCollectibles) MintCollectibleUsername(_ context.Context, req domain
 	return asset, f.created, nil
 }
 
+func (f *fakeCollectibles) UpdateCollectibleUsernamePrice(_ context.Context, req domain.UpdateCollectibleUsernamePriceRequest) (domain.CollectibleUsername, bool, error) {
+	asset := f.assets[strings.ToLower(req.Username)]
+	asset.Currency, asset.Amount, asset.CryptoCurrency, asset.CryptoAmount = req.Currency, req.Amount, req.CryptoCurrency, req.CryptoAmount
+	f.assets[strings.ToLower(req.Username)] = asset
+	return asset, true, nil
+}
+
+func (f *fakeCollectibles) UpdateCollectibleUsernamePriceWithDelivery(ctx context.Context, req domain.UpdateCollectibleUsernamePriceRequest, effects store.DeliveryEffectsBuilder[store.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, bool, error) {
+	current := f.assets[strings.ToLower(req.Username)]
+	if err := applyFakeUsernameDelivery(current.Owner, effects); err != nil {
+		return domain.CollectibleUsername{}, false, err
+	}
+	return f.UpdateCollectibleUsernamePrice(ctx, req)
+}
+
 func (f *fakeCollectibles) TransferCollectibleUsername(_ context.Context, req domain.TransferCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error) {
 	f.transfers = append(f.transfers, req)
 	asset := f.assets[strings.ToLower(req.Username)]
@@ -145,6 +161,20 @@ func (f *fakeCollectibles) TransferCollectibleUsername(_ context.Context, req do
 	asset.TransferCount++
 	f.assets[strings.ToLower(req.Username)] = asset
 	return asset, f.changed, nil
+}
+
+func (f *fakeCollectibles) PurchaseCollectibleUsername(_ context.Context, req domain.PurchaseCollectibleUsernameRequest) (domain.CollectibleUsername, error) {
+	f.purchases = append(f.purchases, req)
+	asset := f.assets[strings.ToLower(req.Username)]
+	asset.Username = req.Username
+	asset.Status = domain.CollectibleUsernameStatusOwned
+	asset.Owner = req.Buyer
+	if asset.OriginalOwner.Type == "" {
+		asset.OriginalOwner = req.Buyer
+	}
+	asset.TransferCount++
+	f.assets[strings.ToLower(req.Username)] = asset
+	return asset, nil
 }
 
 func (f *fakeCollectibles) RevokeCollectibleUsername(_ context.Context, req domain.RevokeCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error) {
@@ -189,6 +219,13 @@ func (f *fakeCollectibles) TransferCollectibleUsernameWithDelivery(ctx context.C
 		return domain.CollectibleUsername{}, false, err
 	}
 	return f.TransferCollectibleUsername(ctx, req)
+}
+
+func (f *fakeCollectibles) PurchaseCollectibleUsernameWithDelivery(ctx context.Context, req domain.PurchaseCollectibleUsernameRequest, effects store.DeliveryEffectsBuilder[store.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, error) {
+	if err := applyFakeUsernameDelivery(req.Buyer, effects); err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	return f.PurchaseCollectibleUsername(ctx, req)
 }
 
 func (f *fakeCollectibles) RevokeCollectibleUsernameWithDelivery(ctx context.Context, req domain.RevokeCollectibleUsernameRequest, effects store.DeliveryEffectsBuilder[store.UsernameAudienceDeliverySnapshot]) (domain.CollectibleUsername, bool, error) {

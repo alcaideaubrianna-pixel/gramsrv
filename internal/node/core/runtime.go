@@ -758,6 +758,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		ChannelDialogCacheMaxEntries: cfg.ChannelDialogCacheMaxEntries,
 		ChannelBoostCacheMaxEntries:  cfg.ChannelBoostCacheMaxEntries,
 		ChannelBoostCacheTTL:         cfg.ChannelBoostCacheTTL,
+		StarGiftTONStartingGrant:     cfg.StarGiftTONStartingGrant,
 	}, nodeprojection.StoreOptions{
 		ChannelOptions: []postgres.ChannelStoreOption{
 			postgres.WithChannelAllocators(channelIDAllocator, channelMessageIDAllocator),
@@ -1211,6 +1212,9 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		postgres.WithStarGiftMarketPolicy(domain.StarGiftMarketPolicy{
 			StarsProceedsPermille: cfg.StarGiftStarsProceedsPermille,
 			TONProceedsPermille:   cfg.StarGiftTONProceedsPermille,
+			ResaleMaxStars:        cfg.StarGiftResaleMaxStars,
+			ResaleMaxTONNanoton:   cfg.StarGiftResaleMaxTON * 1_000_000_000,
+			ResaleMinStars:        cfg.StarGiftResaleMinStars,
 		}))
 	starGiftWithdrawalOptions, err := localStarGiftWithdrawalOptions(cfg.PublicBaseURL, cfg.PublicLinkWebAddr, cfg.StarGiftExportMode)
 	if err != nil {
@@ -1416,7 +1420,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	// Collectible (NFT) usernames and the gramsrv composite account rating are
 	// optional read models projected at the protocol edge. The rating worker
 	// computes and persists scores; profile reads never recompute them.
-	collectibleUsernameStore := postgres.NewCollectibleUsernameStore(pool)
+	collectibleUsernameStore := postgres.NewCollectibleUsernameStore(pool, postgres.WithCollectibleUsernameTONStartingGrant(cfg.StarGiftTONStartingGrant))
 	accountRatingStore := postgres.NewAccountRatingStore(pool)
 	usernamesService := usernamesapp.NewService(
 		usernamesapp.WithRegistryStore(collectibleUsernameStore),
@@ -1496,6 +1500,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		appUpdateResolver = client
 	}
 	router := rpc.New(rpc.Config{
+		DevStarsPaymentsEnabled:  cfg.DevStarsPaymentsEnabled,
 		DC:                       cfg.DC,
 		DefaultCountryCode:       cfg.DefaultCountryCode,
 		IP:                       cfg.AdvertiseIP,
@@ -1518,6 +1523,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		UpdatePublicURL:          cfg.UpdatePublicURL,
 		PublicAppScheme:          cfg.PublicAppScheme,
 		PublicAppLinkBase:        cfg.PublicAppLinkBase,
+		StarGiftTONStarsRate:     cfg.StarGiftTONStarsRate,
 		// PFS temp→perm 解析缓存：显式撤销会清缓存并断开连接，re-bind 即时失效；
 		// 配置 TTL 只承担跨进程/异常失效兜底，避免大连接数周期性打满 PG。
 		TempKeyResolveCacheTTL:         cfg.TempKeyResolveCacheTTL,
@@ -1841,25 +1847,27 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		return fmt.Errorf("start admin api: %w", err)
 	}
 	if _, err := web.Start(ctx, web.Config{
-		Addr:               cfg.PublicLinkWebAddr,
-		PublicBaseURL:      cfg.PublicBaseURL,
-		AppScheme:          cfg.PublicAppScheme,
-		AppLinkBase:        cfg.PublicAppLinkBase,
-		WebBaseURL:         cfg.PublicWebBaseURL,
-		AppName:            cfg.PublicAppName,
-		StickerSets:        filesService,
-		Users:              userStore,
-		Channels:           channelStore,
-		Privacy:            privacyService,
-		Photos:             filesService,
-		UniqueGifts:        giftsService,
-		GiftWithdrawals:    giftsService,
-		RevenueWithdrawals: giftsService,
-		TONGiftExports:     tonExportService,
-		TONGiftClaims:      tonClaimService,
-		TONGiftFiles:       filesService,
-		ModerationAppeals:  moderationService,
-		TelegramLogin:      telegramLoginHTTPHandler,
+		Addr:                   cfg.PublicLinkWebAddr,
+		PublicBaseURL:          cfg.PublicBaseURL,
+		AppScheme:              cfg.PublicAppScheme,
+		AppLinkBase:            cfg.PublicAppLinkBase,
+		WebBaseURL:             cfg.PublicWebBaseURL,
+		AppName:                cfg.PublicAppName,
+		StickerSets:            filesService,
+		Users:                  userStore,
+		Channels:               channelStore,
+		Privacy:                privacyService,
+		Photos:                 filesService,
+		UniqueGifts:            giftsService,
+		GiftWithdrawals:        giftsService,
+		RevenueWithdrawals:     giftsService,
+		TONGiftExports:         tonExportService,
+		TONGiftClaims:          tonClaimService,
+		TONGiftFiles:           filesService,
+		ModerationAppeals:      moderationService,
+		TelegramLogin:          telegramLoginHTTPHandler,
+		GiftPreviewCacheDir:    cfg.GiftPreviewCacheDir,
+		GiftPreviewRendererURL: cfg.GiftPreviewRendererURL,
 	}, logger.Named("public-web")); err != nil {
 		return fmt.Errorf("start public Web: %w", err)
 	}

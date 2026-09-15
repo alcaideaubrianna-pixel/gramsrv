@@ -1,15 +1,16 @@
-import { ArrowLeft, ArrowLeftRight, ExternalLink, Flame, Trash2, RefreshCw, Undo2 } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Coins, ExternalLink, Flame, Trash2, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { ChannelPicker, UserPicker } from "../components/EntityPicker";
 import { Alert, Badge, EmptyRow, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
-import { displayUsername, formatCurrency, formatDate } from "../lib/format";
+import { currencyExponent, displayUsername, formatCurrency, formatDate, toSmallestUnits } from "../lib/format";
 import type { Navigate } from "../routing";
 import type {
   AccountRow,
   ChannelRow,
+  CollectibleCurrency,
   CollectibleUsernameDetail,
   CollectibleUsernameTransferKind
 } from "../types";
@@ -25,6 +26,11 @@ export function CollectibleUsernameDetailPage({ id, navigate }: { id: string; na
   const [recipientKind, setRecipientKind] = useState<RecipientKind>("user");
   const [recipientUser, setRecipientUser] = useState<AccountRow | null>(null);
   const [recipientChannel, setRecipientChannel] = useState<ChannelRow | null>(null);
+  const [priceCurrency, setPriceCurrency] = useState<CollectibleCurrency>("XTR");
+  const [priceAmount, setPriceAmount] = useState("");
+  const [priceCryptoCurrency, setPriceCryptoCurrency] = useState("");
+  const [priceCryptoAmount, setPriceCryptoAmount] = useState("");
+  const [priceEditorOpen, setPriceEditorOpen] = useState(false);
 
   async function load() {
     setBusy(true);
@@ -58,6 +64,28 @@ export function CollectibleUsernameDetailPage({ id, navigate }: { id: string; na
   function openOwner() {
     if (!hasOwner) return;
     navigate(asset.OwnerPeerType === "channel" ? `/channels/${asset.OwnerPeerID}` : `/accounts/${asset.OwnerPeerID}`);
+  }
+
+  function openPriceEditor() {
+    setPriceCurrency((asset.Currency as CollectibleCurrency) || "XTR");
+    setPriceAmount(asset.Amount && asset.Amount !== "0" ? asset.Amount : "");
+    setPriceCryptoCurrency(asset.CryptoCurrency || "");
+    setPriceCryptoAmount(asset.CryptoAmount && asset.CryptoAmount !== "0" ? asset.CryptoAmount : "");
+    setPriceEditorOpen(true);
+  }
+
+  const minorPriceAmount = toSmallestUnits(priceAmount, priceCurrency);
+  const minorPriceCryptoAmount = priceCryptoCurrency ? toSmallestUnits(priceCryptoAmount, priceCryptoCurrency) : "0";
+  const priceAmountInvalid = minorPriceAmount === null;
+  const priceCryptoAmountInvalid = minorPriceCryptoAmount === null;
+
+  function pricePayload(): Record<string, unknown> {
+    const payload: Record<string, unknown> = { username: asset.Username, currency: priceCurrency, amount: minorPriceAmount ?? "0" };
+    if (priceCryptoCurrency) {
+      payload.crypto_currency = priceCryptoCurrency;
+      payload.crypto_amount = minorPriceCryptoAmount ?? "0";
+    }
+    return payload;
   }
 
   // Peer ids travel as decimal strings to match the backend `,string` tags.
@@ -200,6 +228,57 @@ export function CollectibleUsernameDetailPage({ id, navigate }: { id: string; na
               <p className="bot-create-note">{t("usernames.burnedHint")}</p>
             ) : (
               <>
+                {!priceEditorOpen ? (
+                  <div className="action-stack">
+                    <button className="btn icon-text" type="button" onClick={openPriceEditor}>
+                      <Coins size={15} /> {t("usernames.updatePrice")}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bot-create-fields">
+                    <label className="duration-field">
+                      <span>{t("usernames.currency")}</span>
+                      <select value={priceCurrency} onChange={(event) => setPriceCurrency(event.target.value as CollectibleCurrency)}>
+                        <option value="XTR">XTR</option>
+                        <option value="TON">TON</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </label>
+                    <label className="duration-field">
+                      <span>{t("usernames.amount", { currency: priceCurrency })}</span>
+                      <input value={priceAmount} onChange={(event) => setPriceAmount(event.target.value)} inputMode="decimal" placeholder="1000" />
+                    </label>
+                    <label className="duration-field">
+                      <span>{t("usernames.cryptoCurrency")}</span>
+                      <select value={priceCryptoCurrency} onChange={(event) => setPriceCryptoCurrency(event.target.value)}>
+                        <option value="">{t("usernames.cryptoNone")}</option>
+                        <option value="TON">TON</option>
+                      </select>
+                    </label>
+                    {priceCryptoCurrency !== "" && (
+                      <label className="duration-field">
+                        <span>{t("usernames.cryptoAmount", { currency: priceCryptoCurrency })}</span>
+                        <input value={priceCryptoAmount} onChange={(event) => setPriceCryptoAmount(event.target.value)} inputMode="decimal" placeholder="12.5" />
+                      </label>
+                    )}
+                    {priceAmountInvalid && <Alert>{t("usernames.amountInvalid", { currency: priceCurrency, decimals: String(currencyExponent(priceCurrency)) })}</Alert>}
+                    {priceCryptoCurrency !== "" && priceCryptoAmountInvalid && (
+                      <Alert>{t("usernames.amountInvalid", { currency: priceCryptoCurrency, decimals: String(currencyExponent(priceCryptoCurrency)) })}</Alert>
+                    )}
+                    <div className="bot-create-actions">
+                      <button className="btn" type="button" onClick={() => setPriceEditorOpen(false)}>{t("common.close")}</button>
+                      <ActionButton
+                        disabled={priceAmountInvalid || priceCryptoAmountInvalid}
+                        label={t("usernames.updatePrice")}
+                        icon={<Coins size={15} />}
+                        tone="neutral"
+                        path="/api/actions/update-collectible-username-price"
+                        payload={pricePayload}
+                        onDone={() => { setPriceEditorOpen(false); void load(); }}
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="action-stack">
                   <ActionButton
                     label={t("usernames.revoke")}

@@ -52,14 +52,23 @@ var (
 
 // Config 是 Router 所需的服务端信息。
 type Config struct {
-	DC                  int
-	DefaultCountryCode  string // help.getNearestDc 返回的 ISO 3166-1 alpha-2 国家码。
-	IP                  string // 对外公布的 DC IP（写入 DCOptions）
-	Port                int    // 对外公布的 DC 端口
-	InstanceID          string // 进程内唯一标识，用于跨实例 ephemeral push 去重。
-	OutboundPushTimeout time.Duration
-	SendRateLimit       int
-	SendRateWindow      time.Duration
+	// DevStarsPaymentsEnabled gates the fake "telesrv_dev" fiat-payment
+	// provider (see validDevStarsPaymentCredentials/devStarsFiatPaymentForm):
+	// it always "succeeds" without charging a real card, so leaving it
+	// reachable in production lets anyone mint free Stars. Found live
+	// 2026-09-08 exploited for 2M+ free stars across 9 accounts before this
+	// flag existed -- defaults to false (off) via
+	// TELESRV_DEV_STARS_PAYMENTS_ENABLED; only a real deployment doing local
+	// dev/testing without a live payment provider should ever set it true.
+	DevStarsPaymentsEnabled bool
+	DC                      int
+	DefaultCountryCode      string // help.getNearestDc 返回的 ISO 3166-1 alpha-2 国家码。
+	IP                      string // 对外公布的 DC IP（写入 DCOptions）
+	Port                    int    // 对外公布的 DC 端口
+	InstanceID              string // 进程内唯一标识，用于跨实例 ephemeral push 去重。
+	OutboundPushTimeout     time.Duration
+	SendRateLimit           int
+	SendRateWindow          time.Duration
 	// AuthCode*RateLimit protects the unauthenticated sendCode/resendCode write path.
 	// The phone budget is keyed by SHA-256(normalized phone), never by the plaintext phone;
 	// the second budget is keyed by the physical connection's raw auth_key_id.
@@ -93,6 +102,10 @@ type Config struct {
 	// 保持 <scheme>://<route>，非空时生成 <base>/<route>。
 	PublicAppScheme   string
 	PublicAppLinkBase string
+	// StarGiftTONStarsRate is how many Stars one whole TON is worth for the
+	// display-only Stars-equivalent shown alongside a TON-priced resale
+	// listing (see tgStarGiftResellAmounts). It never changes what is charged.
+	StarGiftTONStarsRate int64
 	// TempKeyResolveCacheTTL 是 PFS temp→perm auth key 解析的进程内缓存有效期。>0 时同一 temp key
 	// 在 TTL 内复用上次解析、跳过每帧 ResolveAuthKey 的 PG 查询；0（默认/测试）关闭=每帧重校验。
 	// 显式撤销会删除协议 auth key、清缓存并断开活跃连接；TTL 只影响自然过期或异常路径下的
@@ -301,6 +314,9 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r.webPageResolveSem = make(chan struct{}, webPageResolveConcurrency)
 	if cfg.DC > 0 {
 		groupCallStreamDCID = cfg.DC
+	}
+	if cfg.StarGiftTONStarsRate > 0 {
+		starGiftTONStarsRate = cfg.StarGiftTONStarsRate
 	}
 	d := tlprofile.NewDispatcher()
 	if err := registerLayerRPCAdmissionFieldPreflights(d); err != nil {

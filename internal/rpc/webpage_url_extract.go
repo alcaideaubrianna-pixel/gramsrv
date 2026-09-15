@@ -259,6 +259,11 @@ func (r *Router) webPagePendingOrCachedMedia(ctx context.Context, rawURL string,
 		page.ForceSmallMedia = forceSmall
 		return &domain.MessageMedia{Kind: domain.MessageMediaKindWebPage, InvertMedia: invertMedia, WebPage: &page}
 	}
+	if page, ok := r.resolveUniqueGiftWebPage(ctx, rawURL); ok {
+		page.ForceLargeMedia = forceLarge
+		page.ForceSmallMedia = forceSmall
+		return &domain.MessageMedia{Kind: domain.MessageMediaKindWebPage, InvertMedia: invertMedia, WebPage: &page}
+	}
 	if r.deps.Files == nil || !r.deps.Files.WebPagePreviewEnabled() {
 		return nil
 	}

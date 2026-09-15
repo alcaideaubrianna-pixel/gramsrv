@@ -2,13 +2,18 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +49,12 @@ type Config struct {
 	// the listener so discovery/auth/token and public links share the exact
 	// externally registered origin behind one reverse proxy.
 	TelegramLogin http.Handler
+	// GiftPreviewCacheDir, when set, enables static preview images (backdrop
+	// + tiled pattern + model + serial number) for /nft/{slug} pages,
+	// composited on first request via GiftPreviewRendererURL and cached to
+	// disk forever after (a unique gift's visual attributes never change).
+	GiftPreviewCacheDir    string
+	GiftPreviewRendererURL string
 }
 
 type StickerSetResolver interface {
@@ -72,6 +83,7 @@ type ProfilePhotoResolver interface {
 
 type UniqueStarGiftResolver interface {
 	UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error)
+	CollectibleAnimationJSON(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
 }
 
 type StarGiftWithdrawalResolver interface {
@@ -177,23 +189,25 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		logger = zap.NewNop()
 	}
 	h := &handler{
-		stickerSets:        cfg.StickerSets,
-		users:              cfg.Users,
-		channels:           cfg.Channels,
-		privacy:            cfg.Privacy,
-		photos:             cfg.Photos,
-		uniqueGifts:        cfg.UniqueGifts,
-		giftWithdrawals:    cfg.GiftWithdrawals,
-		revenueWithdrawals: cfg.RevenueWithdrawals,
-		tonGiftExports:     cfg.TONGiftExports,
-		tonGiftClaims:      cfg.TONGiftClaims,
-		tonGiftFiles:       cfg.TONGiftFiles,
-		appeals:            cfg.ModerationAppeals,
-		publicBaseURL:      cfg.PublicBaseURL,
-		appLinks:           appLinks,
-		webBaseURL:         cfg.WebBaseURL,
-		appName:            cfg.AppName,
-		logger:             logger,
+		stickerSets:            cfg.StickerSets,
+		users:                  cfg.Users,
+		channels:               cfg.Channels,
+		privacy:                cfg.Privacy,
+		photos:                 cfg.Photos,
+		uniqueGifts:            cfg.UniqueGifts,
+		giftWithdrawals:        cfg.GiftWithdrawals,
+		revenueWithdrawals:     cfg.RevenueWithdrawals,
+		tonGiftExports:         cfg.TONGiftExports,
+		tonGiftClaims:          cfg.TONGiftClaims,
+		tonGiftFiles:           cfg.TONGiftFiles,
+		appeals:                cfg.ModerationAppeals,
+		publicBaseURL:          cfg.PublicBaseURL,
+		appLinks:               appLinks,
+		webBaseURL:             cfg.WebBaseURL,
+		appName:                cfg.AppName,
+		logger:                 logger,
+		giftPreviewCacheDir:    strings.TrimSpace(cfg.GiftPreviewCacheDir),
+		giftPreviewRendererURL: strings.TrimSpace(cfg.GiftPreviewRendererURL),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
@@ -204,6 +218,9 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /addlist/{slug}", h.addList)
 	mux.HandleFunc("GET /nft/{slug}", h.uniqueGift)
 	mux.HandleFunc("GET /nft/{slug}/{$}", h.uniqueGift)
+	if h.giftPreviewCacheDir != "" && h.giftPreviewRendererURL != "" {
+		mux.HandleFunc("GET /_public/gift-preview/{slugFile}", h.uniqueGiftPreviewImage)
+	}
 	registerBearerCapabilityRoute(mux, "GET", publicRoutePrefix+"/gift-withdrawal/{requestID}", h.starGiftWithdrawal)
 	registerBearerCapabilityRoute(mux, "POST", publicRoutePrefix+"/gift-withdrawal/{requestID}", h.completeStarGiftWithdrawal)
 	registerBearerCapabilityRoute(mux, "GET", publicRoutePrefix+"/revenue-withdrawal/{requestID}", h.channelRevenueWithdrawal)
@@ -270,23 +287,25 @@ func bearerCapabilitySecurityHeaders(next http.Handler) http.Handler {
 }
 
 type handler struct {
-	stickerSets        StickerSetResolver
-	users              UsernameResolver
-	channels           PublicChannelResolver
-	privacy            AnonymousPrivacyResolver
-	photos             ProfilePhotoResolver
-	uniqueGifts        UniqueStarGiftResolver
-	giftWithdrawals    StarGiftWithdrawalResolver
-	revenueWithdrawals ChannelRevenueWithdrawalResolver
-	tonGiftExports     TONGiftExportResolver
-	tonGiftClaims      TONGiftClaimResolver
-	tonGiftFiles       PublicFileResolver
-	appeals            ModerationAppealResolver
-	publicBaseURL      string
-	appLinks           links.AppLinkBuilder
-	webBaseURL         string
-	appName            string
-	logger             *zap.Logger
+	stickerSets            StickerSetResolver
+	users                  UsernameResolver
+	channels               PublicChannelResolver
+	privacy                AnonymousPrivacyResolver
+	photos                 ProfilePhotoResolver
+	uniqueGifts            UniqueStarGiftResolver
+	giftWithdrawals        StarGiftWithdrawalResolver
+	revenueWithdrawals     ChannelRevenueWithdrawalResolver
+	tonGiftExports         TONGiftExportResolver
+	tonGiftClaims          TONGiftClaimResolver
+	tonGiftFiles           PublicFileResolver
+	appeals                ModerationAppealResolver
+	publicBaseURL          string
+	appLinks               links.AppLinkBuilder
+	webBaseURL             string
+	appName                string
+	logger                 *zap.Logger
+	giftPreviewCacheDir    string
+	giftPreviewRendererURL string
 }
 
 type moderationAppealPage struct {
@@ -646,6 +665,10 @@ func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 		subtitle += fmt.Sprintf(" · %s/%s issued", groupedDecimal(unique.AvailabilityIssued), groupedDecimal(unique.AvailabilityTotal))
 	}
 	app := h.appURL("nft", "slug", canonicalSlug)
+	var imageURL string
+	if h.giftPreviewCacheDir != "" && h.giftPreviewRendererURL != "" {
+		imageURL = h.publicBaseURL + "/_public/gift-preview/" + url.PathEscape(canonicalSlug) + ".png"
+	}
 	data := pageData{
 		AppName:      h.appName,
 		Title:        title,
@@ -653,6 +676,7 @@ func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 		Subtitle:     subtitle,
 		Description:  "This collectible was created from a gift on " + h.appName + ". Open it in the app to view its current details.",
 		CanonicalURL: h.publicURL("nft", canonicalSlug),
+		ImageURL:     imageURL,
 		AppURL:       template.URL(app),
 		LegacyTgURL:  template.URL(legacyTgURL("nft", "slug", canonicalSlug)),
 	}
@@ -662,6 +686,162 @@ func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 	if err := landingTemplate.Execute(w, data); err != nil {
 		h.logger.Error("Render public unique star gift page failed", zap.String("slug", canonicalSlug), zap.Error(err))
 	}
+}
+
+// uniqueGiftPreviewImage serves the composited static preview (backdrop +
+// tiled pattern + model + serial number) referenced by /nft/{slug}'s
+// og:image. A unique gift's model/pattern/backdrop/number never change
+// once minted, so the first request renders via giftPreviewRendererURL
+// (a small internal service backed by headless Chromium -- gramsrv itself
+// has no Lottie/TGS rasterizer) and every request after that, including
+// from other processes/restarts, is served straight off disk.
+func (h *handler) uniqueGiftPreviewImage(w http.ResponseWriter, r *http.Request) {
+	// net/http's ServeMux wildcards must consume the entire final path
+	// segment (no "{name}.png"-style literal suffix), so the route captures
+	// "slug.png" whole and the extension is split off here instead.
+	slugFile := strings.ToLower(strings.TrimSpace(r.PathValue("slugFile")))
+	slug, ext, hasExt := strings.Cut(slugFile, ".")
+	if !hasExt || ext != "png" {
+		http.NotFound(w, r)
+		return
+	}
+	if h.uniqueGifts == nil || h.giftPreviewCacheDir == "" || h.giftPreviewRendererURL == "" || !validStarGiftSlugPath(slug) {
+		http.NotFound(w, r)
+		return
+	}
+	cachePath := filepath.Join(h.giftPreviewCacheDir, slug+".png")
+	if data, err := os.ReadFile(cachePath); err == nil {
+		h.serveGiftPreviewBytes(w, r, slug, data)
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		h.logger.Error("Read cached gift preview failed", zap.String("slug", slug), zap.Error(err))
+	}
+
+	unique, found, err := h.uniqueGifts.UniqueBySlug(r.Context(), slug)
+	if err != nil {
+		h.logger.Error("Gift preview: unique gift lookup failed", zap.String("slug", slug), zap.Error(err))
+		http.Error(w, "collectible gift lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if !found || unique.Num <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	png, err := h.renderGiftPreview(r.Context(), unique)
+	if err != nil {
+		h.logger.Error("Gift preview render failed", zap.String("slug", slug), zap.Error(err))
+		http.Error(w, "preview render failed", http.StatusBadGateway)
+		return
+	}
+
+	// Best-effort disk cache: write to a temp file first and rename, so a
+	// concurrent reader never observes a partially-written PNG.
+	if err := os.MkdirAll(h.giftPreviewCacheDir, 0o755); err != nil {
+		h.logger.Warn("Create gift preview cache dir failed", zap.Error(err))
+	} else {
+		tmp, err := os.CreateTemp(h.giftPreviewCacheDir, slug+".*.tmp")
+		if err != nil {
+			h.logger.Warn("Create gift preview temp file failed", zap.String("slug", slug), zap.Error(err))
+		} else {
+			tmpPath := tmp.Name()
+			_, writeErr := tmp.Write(png)
+			closeErr := tmp.Close()
+			if writeErr != nil || closeErr != nil {
+				os.Remove(tmpPath)
+				h.logger.Warn("Write gift preview cache failed", zap.String("slug", slug), zap.Error(errors.Join(writeErr, closeErr)))
+			} else if err := os.Rename(tmpPath, cachePath); err != nil {
+				os.Remove(tmpPath)
+				h.logger.Warn("Rename gift preview cache failed", zap.String("slug", slug), zap.Error(err))
+			}
+		}
+	}
+
+	h.serveGiftPreviewBytes(w, r, slug, png)
+}
+
+func (h *handler) serveGiftPreviewBytes(w http.ResponseWriter, r *http.Request, slug string, data []byte) {
+	etag := fmt.Sprintf("\"gift-preview-%s\"", slug)
+	w.Header().Set("ETag", etag)
+	// Immutable: a gift's model/pattern/backdrop/number are permanent once
+	// the collectible is minted, so this file never changes under this URL.
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
+type giftPreviewRenderRequest struct {
+	Model        json.RawMessage `json:"model,omitempty"`
+	Pattern      json.RawMessage `json:"pattern,omitempty"`
+	CenterColor  string          `json:"centerColor"`
+	EdgeColor    string          `json:"edgeColor"`
+	PatternColor string          `json:"patternColor"`
+	TextColor    string          `json:"textColor"`
+	Number       string          `json:"number"`
+}
+
+func (h *handler) renderGiftPreview(ctx context.Context, unique domain.UniqueStarGift) ([]byte, error) {
+	req := giftPreviewRenderRequest{
+		CenterColor:  intColorToHex(unique.Backdrop.CenterColor),
+		EdgeColor:    intColorToHex(unique.Backdrop.EdgeColor),
+		PatternColor: intColorToHex(unique.Backdrop.PatternColor),
+		TextColor:    intColorToHex(unique.Backdrop.TextColor),
+		Number:       strconv.Itoa(unique.Num),
+	}
+	if unique.Model.ID != 0 {
+		if raw, ok, err := h.uniqueGifts.CollectibleAnimationJSON(ctx, unique.GiftID, domain.StarGiftCollectibleModel, unique.Model.ID); err != nil {
+			return nil, fmt.Errorf("load model animation: %w", err)
+		} else if ok {
+			req.Model = json.RawMessage(raw)
+		}
+	}
+	if unique.Pattern.ID != 0 {
+		if raw, ok, err := h.uniqueGifts.CollectibleAnimationJSON(ctx, unique.GiftID, domain.StarGiftCollectiblePattern, unique.Pattern.ID); err != nil {
+			return nil, fmt.Errorf("load pattern animation: %w", err)
+		} else if ok {
+			req.Pattern = json.RawMessage(raw)
+		}
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("encode render request: %w", err)
+	}
+	renderCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(renderCtx, http.MethodPost, h.giftPreviewRendererURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build render request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("call preview renderer: %w", err)
+	}
+	defer resp.Body.Close()
+	png, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read renderer response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("preview renderer returned %d: %s", resp.StatusCode, string(png))
+	}
+	if len(png) == 0 {
+		return nil, fmt.Errorf("preview renderer returned empty body")
+	}
+	return png, nil
+}
+
+func intColorToHex(c int) string {
+	if c < 0 {
+		c = 0
+	}
+	return fmt.Sprintf("#%06X", c&0xFFFFFF)
 }
 
 func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
@@ -1311,6 +1491,7 @@ type pageData struct {
 	Subtitle     string
 	Description  string
 	CanonicalURL string
+	ImageURL     string
 	AppURL       template.URL
 	LegacyTgURL  template.URL
 	AppURLJS     template.JS
@@ -1453,6 +1634,9 @@ var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype htm
   <meta property="og:title" content="{{.Title}}">
   <meta property="og:description" content="{{.Description}}">
   <meta property="og:url" content="{{.CanonicalURL}}">
+  {{if .ImageURL}}<meta property="og:image" content="{{.ImageURL}}">
+  <meta name="twitter:image" content="{{.ImageURL}}">
+  <meta name="twitter:card" content="summary_large_image">{{end}}
   <meta name="robots" content="noindex">
   <style>
     :root { color-scheme: light dark; font-family: Arial, Helvetica, sans-serif; }
