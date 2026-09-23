@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/iamxvbaba/td/clock"
@@ -200,19 +201,82 @@ func TestAccountGetDefaultEmojiStatusesFailsWhenUnseeded(t *testing.T) {
 	}
 }
 
-func TestMessagesGetStickerSetDoesNotProjectClientPlaceholder(t *testing.T) {
-	files := &fakeFiles{sets: map[domain.StickerSetKind][]domain.StickerSet{
-		domain.StickerSetKindSystem: {{
-			ID: 77, AccessHash: 7700, ShortName: "AnimatedEmojies",
-			Kind: domain.StickerSetKindSystem, SystemKey: "animated_emoji",
-		}},
-	}}
-	r, ctx := newStickerReadTestRouter(t, files)
+func TestMessagesGetStickerSetAndroidPlaceholderUsesSeededSet(t *testing.T) {
+	ctx := context.Background()
+	docs := make(map[int64]domain.Document)
+	documentIDs := make([]int64, 0, androidPlaceholderStickerDocumentLimit+3)
+	for i := 0; i < androidPlaceholderStickerDocumentLimit+3; i++ {
+		id := int64(100 + i)
+		documentIDs = append(documentIDs, id)
+		docs[id] = domain.Document{ID: id, AccessHash: id + 1000, DCID: 2}
+	}
+	files := &fakeFiles{
+		docs: docs,
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindSystem: {
+				{
+					ID:          77,
+					AccessHash:  7700,
+					ShortName:   "AnimatedEmojies",
+					Title:       "Animated Emoji",
+					Kind:        domain.StickerSetKindSystem,
+					SystemKey:   "animated_emoji",
+					Emojis:      true,
+					Count:       len(documentIDs),
+					Hash:        12345,
+					DocumentIDs: documentIDs,
+					Packs: []domain.StickerPack{{
+						Emoticon:    "🙂",
+						DocumentIDs: append([]int64(nil), documentIDs...),
+					}},
+					Keywords: []domain.StickerKeyword{{DocumentID: documentIDs[0], Keywords: []string{"placeholder"}}},
+				},
+			},
+		},
+	}
+	r := &Router{deps: Deps{Files: files}}
+
 	res, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
 		Stickerset: &tg.InputStickerSetShortName{ShortName: "tg_placeholders_android"},
 	})
-	if res != nil || !tgerr.Is(err, "STICKERSET_INVALID") {
-		t.Fatalf("unpersisted client placeholder = %T %v, want STICKERSET_INVALID", res, err)
+	if err != nil {
+		t.Fatalf("getStickerSet placeholder: %v", err)
+	}
+	full, ok := res.(*tg.MessagesStickerSet)
+	if !ok {
+		t.Fatalf("getStickerSet placeholder = %T, want *tg.MessagesStickerSet", res)
+	}
+	if full.Set.ID == 77 || full.Set.ShortName != "tg_placeholders_android" {
+		t.Fatalf("placeholder projection identity = %d/%q, want independent tg_placeholders_android", full.Set.ID, full.Set.ShortName)
+	}
+	if len(full.Documents) != androidPlaceholderStickerDocumentLimit || full.Set.Count != androidPlaceholderStickerDocumentLimit {
+		t.Fatalf("placeholder projection documents/count = %d/%d, want exactly %d", len(full.Documents), full.Set.Count, androidPlaceholderStickerDocumentLimit)
+	}
+	if full.Set.Hash == 0 || len(full.Packs) != 1 || len(full.Packs[0].Documents) != androidPlaceholderStickerDocumentLimit {
+		t.Fatalf("placeholder projection hash/packs = %d/%+v", full.Set.Hash, full.Packs)
+	}
+	if got := files.sets[domain.StickerSetKindSystem][0]; len(got.DocumentIDs) != androidPlaceholderStickerDocumentLimit+3 || got.ID != 77 {
+		t.Fatalf("source set mutated by projection: id=%d docs=%d", got.ID, len(got.DocumentIDs))
+	}
+
+	// 投影有独立 identity：客户端后续按返回的 id/access_hash 请求仍能解析，不会
+	// 与真正的 AnimatedEmoji set id/hash 缓存互相覆盖。
+	byID, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
+		Stickerset: &tg.InputStickerSetID{ID: full.Set.ID, AccessHash: full.Set.AccessHash},
+	})
+	if err != nil {
+		t.Fatalf("get placeholder projection by id: %v", err)
+	}
+	if byIDFull, ok := byID.(*tg.MessagesStickerSet); !ok || byIDFull.Set.ID != full.Set.ID || len(byIDFull.Documents) != androidPlaceholderStickerDocumentLimit {
+		t.Fatalf("placeholder projection by id = %T %+v", byID, byID)
+	}
+	if cached, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
+		Stickerset: &tg.InputStickerSetShortName{ShortName: "tg_placeholders_android"},
+		Hash:       full.Set.Hash,
+	}); err != nil {
+		t.Fatalf("get placeholder projection matching hash: %v", err)
+	} else if _, ok := cached.(*tg.MessagesStickerSetNotModified); !ok {
+		t.Fatalf("placeholder matching hash = %T, want NotModified", cached)
 	}
 }
 
@@ -264,13 +328,91 @@ func TestMessagesGetStickerSetHonorsNonZeroHash(t *testing.T) {
 	}
 }
 
-func TestMessagesGetStickerSetMissingPlaceholderFails(t *testing.T) {
-	r, ctx := newStickerReadTestRouter(t, &fakeFiles{})
+func TestMessagesGetStickerSetAndroidPlaceholderFallsBackToEmptyWithoutSeed(t *testing.T) {
+	ctx := context.Background()
+	r := &Router{deps: Deps{Files: &fakeFiles{}}}
 	res, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
 		Stickerset: &tg.InputStickerSetShortName{ShortName: "tg_placeholders_android"},
 	})
-	if res != nil || !tgerr.Is(err, "STICKERSET_INVALID") {
-		t.Fatalf("missing placeholder = %T %v, want STICKERSET_INVALID", res, err)
+	if err != nil {
+		t.Fatalf("getStickerSet placeholder without seed: %v", err)
+	}
+	full, ok := res.(*tg.MessagesStickerSet)
+	if !ok {
+		t.Fatalf("getStickerSet placeholder without seed = %T, want *tg.MessagesStickerSet", res)
+	}
+	if len(full.Documents) != 0 {
+		t.Fatalf("placeholder without seed documents = %d, want empty compat set", len(full.Documents))
+	}
+}
+
+func TestMessagesGetStickerSetUnseededClientResourcesUseStableStub(t *testing.T) {
+	r := &Router{deps: Deps{Files: &fakeFiles{}}}
+	tests := []struct {
+		name string
+		set  tg.InputStickerSetClass
+	}{
+		{"system set", &tg.InputStickerSetEmojiDefaultTopicIcons{}},
+		{"short name", &tg.InputStickerSetShortName{ShortName: "FestiveFontEmoji"}},
+		{"stale cached ID", &tg.InputStickerSetID{ID: 12345, AccessHash: 67890}},
+		{"empty constructor", &tg.InputStickerSetEmpty{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first, err := r.onMessagesGetStickerSet(context.Background(), &tg.MessagesGetStickerSetRequest{Stickerset: tt.set})
+			if err != nil {
+				t.Fatalf("first getStickerSet: %v", err)
+			}
+			full, ok := first.(*tg.MessagesStickerSet)
+			if !ok || full.Set.Hash == 0 || len(full.Documents) != 0 {
+				t.Fatalf("first getStickerSet = %T %+v, want cacheable empty set", first, first)
+			}
+			second, err := r.onMessagesGetStickerSet(context.Background(), &tg.MessagesGetStickerSetRequest{
+				Stickerset: tt.set,
+				Hash:       full.Set.Hash,
+			})
+			if err != nil {
+				t.Fatalf("cached getStickerSet: %v", err)
+			}
+			if _, ok := second.(*tg.MessagesStickerSetNotModified); !ok {
+				t.Fatalf("cached getStickerSet = %T, want NotModified", second)
+			}
+		})
+	}
+}
+
+type failingStickerResolver struct{ FilesService }
+
+func (failingStickerResolver) ResolveStickerSet(context.Context, domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
+	return domain.StickerSet{}, nil, false, errors.New("store unavailable")
+}
+
+func TestMessagesGetStickerSetKeepsInvalidAndStorageErrors(t *testing.T) {
+	ctx := context.Background()
+	files := &fakeFiles{sets: map[domain.StickerSetKind][]domain.StickerSet{
+		domain.StickerSetKindStickers: {{ID: 10, AccessHash: 100, ShortName: "real"}},
+	}}
+	r := &Router{deps: Deps{Files: files}}
+	for _, req := range []*tg.MessagesGetStickerSetRequest{
+		nil,
+		{},
+		{Stickerset: &tg.InputStickerSetID{ID: 0, AccessHash: 100}},
+		{Stickerset: &tg.InputStickerSetID{ID: 10, AccessHash: 999}},
+		{Stickerset: &tg.InputStickerSetID{ID: clientPlaceholderStickerSets[0].ID, AccessHash: 999}},
+	} {
+		out, err := r.onMessagesGetStickerSet(ctx, req)
+		if out != nil || !tgerr.Is(err, "STICKERSET_INVALID") {
+			t.Fatalf("invalid request %+v = %T %v, want STICKERSET_INVALID", req, out, err)
+		}
+	}
+	for _, deps := range []Deps{{}, {Files: failingStickerResolver{}}} {
+		r := &Router{deps: deps}
+		out, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
+			Stickerset: &tg.InputStickerSetShortName{ShortName: "missing"},
+		})
+		if out != nil || !tgerr.Is(err, "INTERNAL_SERVER_ERROR") {
+			t.Fatalf("missing dependency or store error = %T %v, want INTERNAL", out, err)
+		}
 	}
 }
 
