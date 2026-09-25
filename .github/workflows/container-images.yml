@@ -103,8 +103,6 @@ jobs:
         env:
           ONEPANEL_URL: ${{ secrets.ONEPANEL_URL }}
           ONEPANEL_API_KEY: ${{ secrets.ONEPANEL_API_KEY }}
-          ONEPANEL_COMPOSE_NAME: telesrv
-          ONEPANEL_COMPOSE_PATH: /root/gramsrv/deploy/docker/compose.yaml
           IMAGE_PREFIX: ghcr.io/${{ github.repository }}
         shell: bash
         run: |
@@ -112,7 +110,6 @@ jobs:
 
           : "${ONEPANEL_URL:?Set ONEPANEL_URL in GitHub Actions secrets}"
           : "${ONEPANEL_API_KEY:?Set ONEPANEL_API_KEY in GitHub Actions secrets}"
-          : "${ONEPANEL_COMPOSE_NAME:?Set ONEPANEL_COMPOSE_NAME in GitHub Actions secrets}"
 
           panel_request() {
             local method="$1" path="$2" body="$3" response status http_body api_code timestamp token
@@ -148,28 +145,18 @@ jobs:
               "{\"imageName\":[\"${IMAGE_PREFIX}/${role}:${deploy_tag}\"]}" >/dev/null
           done
 
-          # 1Panel's compose `up` operation does not pull images. Replace only
-          # the image tag in the checked-in Compose definition, then let the
-          # Compose update API recreate the project using the already-pulled
-          # immutable images. An empty env list preserves the existing 1Panel
-          # environment file and its credentials.
-          compose_info="$(panel_request POST /containers/compose/search '{"page":1,"pageSize":50}')"
-          current_env="$(printf '%s' "$compose_info" | jq -r '.data.items[] | select(.name == $name) | .env' --arg name "$ONEPANEL_COMPOSE_NAME")"
-          if [[ -z "$current_env" || "$current_env" == "null" ]]; then
-            echo "Could not read the existing 1Panel environment for ${ONEPANEL_COMPOSE_NAME}" >&2
-            exit 1
-          fi
-          updated_env="$(printf '%s\n' "$current_env" | sed -E "s/^TELESRV_IMAGE_TAG=.*/TELESRV_IMAGE_TAG=${deploy_tag}/")"
-          updated_env="$(printf '%s\n' "$updated_env" | sed -E "s#^TELESRV_IMAGE_PREFIX=.*#TELESRV_IMAGE_PREFIX=${IMAGE_PREFIX}#")"
-          compose_content="$(sed -E "s/:\$\{TELESRV_IMAGE_TAG:-v2\}/:${deploy_tag}/g" deploy/docker/compose.yaml)"
-          update_body="$(jq -n \
-            --arg name "$ONEPANEL_COMPOSE_NAME" \
-            --arg path "$ONEPANEL_COMPOSE_PATH" \
-            --arg content "$compose_content" \
-            --arg env "$updated_env" \
-            '{name: $name, path: $path, content: $content, env: $env}')"
+          # Compose Update does not change the external .env used by this
+          # project. Upgrade each application container directly instead;
+          # 1Panel preserves its existing mounts, ports, networks, and env.
+          for role in migrate file core egress sfu admin edge; do
+            container="telesrv-${role}-1"
+            echo "Upgrading ${container} to ${IMAGE_PREFIX}/${role}:${deploy_tag}"
+            upgrade_body="$(jq -n \
+              --arg container "$container" \
+              --arg image "${IMAGE_PREFIX}/${role}:${deploy_tag}" \
+              '{names: [$container], image: $image, forcePull: true}')"
+            panel_request POST /containers/upgrade "$upgrade_body" >/dev/null
+            sleep 5
+          done
 
-          echo "Updating and restarting Compose project ${ONEPANEL_COMPOSE_NAME}"
-          panel_request POST /containers/compose/update "$update_body" >/dev/null
-
-          echo "1Panel deployment request completed"
+          echo "1Panel container upgrade requests completed"
