@@ -115,7 +115,7 @@ jobs:
           : "${ONEPANEL_COMPOSE_NAME:?Set ONEPANEL_COMPOSE_NAME in GitHub Actions secrets}"
 
           panel_request() {
-            local method="$1" path="$2" body="$3" response status timestamp token
+            local method="$1" path="$2" body="$3" response status http_body api_code timestamp token
             timestamp="$(date +%s)"
             token="$(printf '1panel:%s' "$timestamp" | openssl dgst -sha256 -hmac "$ONEPANEL_API_KEY" -hex | awk '{print $2}')"
             response="$(curl --fail-with-body --silent --show-error \
@@ -131,7 +131,13 @@ jobs:
               printf '%s\n' "$response" >&2
               return 1
             fi
-            printf '%s\n' "${response%$'\n'*}"
+            http_body="${response%$'\n'*}"
+            api_code="$(printf '%s' "$http_body" | jq -r '.code // empty' 2>/dev/null || true)"
+            if [[ "$api_code" != "200" ]]; then
+              printf '1Panel API error: %s\n' "$http_body" >&2
+              return 1
+            fi
+            printf '%s\n' "$http_body"
           }
 
           # docker/metadata-action's sha tag defaults to the short commit SHA.
