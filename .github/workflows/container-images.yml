@@ -139,7 +139,7 @@ jobs:
           for role in migrate file core egress sfu admin edge; do
             echo "Pulling ${IMAGE_PREFIX}/${role}:${deploy_tag}"
             panel_request POST /containers/image/pull \
-              "{\"imageName\":\"${IMAGE_PREFIX}/${role}:${deploy_tag}\"}" >/dev/null
+              "{\"imageName\":[\"${IMAGE_PREFIX}/${role}:${deploy_tag}\"]}" >/dev/null
           done
 
           # 1Panel's compose `up` operation does not pull images. Replace only
