@@ -8,11 +8,12 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
+	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )
 
 // 本文件把 reaction / sticker 资源 RPC 接到真实 seed 数据（documents / sticker_sets /
-// available_reactions）。缺失依赖或缺失 sticker-set 事实直接失败，不构造兼容数据。
+// available_reactions）。存储错误直接失败；未导入的客户端贴纸资源使用稳定兼容响应。
 
 func (r *Router) onMessagesGetAvailableReactions(ctx context.Context, hash int) (tg.MessagesAvailableReactionsClass, error) {
 	if r.deps.Files == nil {
@@ -72,7 +73,7 @@ func (r *Router) onMessagesGetAvailableEffects(ctx context.Context, hash int) (t
 }
 
 func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGetStickerSetRequest) (tg.MessagesStickerSetClass, error) {
-	if req == nil {
+	if req == nil || req.Stickerset == nil {
 		return nil, stickersetInvalidErr()
 	}
 	if r.deps.Files == nil {
@@ -80,6 +81,9 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 	}
 	ref, ok := stickerSetRefFromInput(req.Stickerset)
 	if !ok {
+		return tdesktop.StickerSet(req), nil
+	}
+	if ref.Kind == domain.StickerSetRefByID && ref.ID <= 0 {
 		return nil, stickersetInvalidErr()
 	}
 	set, docs, found, err := r.deps.Files.ResolveStickerSet(ctx, ref)
@@ -87,7 +91,7 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 		return nil, internalErr()
 	}
 	// 量化客户端反复请求哪些集（同集重试 vs 大量不同集）。ResolveStickerSet
-	// 自身的负缓存会短路重复 miss；这里不投影任何替代集合。
+	// 自身的负缓存会短路重复 miss。
 	if r.log != nil {
 		r.log.Debug("getStickerSet",
 			zap.String("ref_kind", string(ref.Kind)),
@@ -99,6 +103,28 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 		)
 	}
 	if !found {
+		if ref.Kind == domain.StickerSetRefByID {
+			for _, placeholder := range clientPlaceholderStickerSets {
+				if ref.ID == placeholder.ID && ref.AccessHash != placeholder.AccessHash {
+					return nil, stickersetInvalidErr()
+				}
+			}
+		}
+		fallbackSet, fallbackDocs, fallbackFound, fallbackErr := r.resolvePlaceholderStickerSet(ctx, ref)
+		if fallbackErr != nil {
+			return nil, internalErr()
+		}
+		if fallbackFound {
+			if req.Hash != 0 && req.Hash == fallbackSet.Hash {
+				return &tg.MessagesStickerSetNotModified{}, nil
+			}
+			return tgMessagesStickerSet(fallbackSet, fallbackDocs), nil
+		}
+		// 客户端可引用尚未导入的官方资源或旧缓存中的 set ID。
+		// 空集携带稳定 hash，让启动查询收敛；真实存储故障仍在上面返回错误。
+		return tdesktop.StickerSet(req), nil
+	}
+	if ref.Kind == domain.StickerSetRefByID && ref.AccessHash != set.AccessHash {
 		return nil, stickersetInvalidErr()
 	}
 	if req.Hash != 0 && req.Hash == set.Hash {
@@ -109,6 +135,146 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 		return nil, err
 	}
 	return tgMessagesStickerSet(set, docs), nil
+}
+
+func (r *Router) resolvePlaceholderStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
+	placeholder, ok := clientPlaceholderStickerSet(ref)
+	if !ok {
+		return domain.StickerSet{}, nil, false, nil
+	}
+	for _, candidate := range placeholderStickerSetCandidates() {
+		set, docs, found, err := r.deps.Files.ResolveStickerSet(ctx, candidate)
+		if err != nil || !found {
+			if err != nil {
+				return domain.StickerSet{}, nil, false, err
+			}
+			continue
+		}
+		if len(docs) >= androidPlaceholderStickerDocumentLimit {
+			projectedSet, projectedDocs := projectClientPlaceholderStickerSet(placeholder, set, docs)
+			if len(projectedDocs) == androidPlaceholderStickerDocumentLimit {
+				return projectedSet, projectedDocs, true, nil
+			}
+		}
+	}
+	return domain.StickerSet{}, nil, false, nil
+}
+
+const androidPlaceholderStickerDocumentLimit = 7
+
+// Android 的两个内建 placeholder 名称没有独立 seed。兼容投影使用稳定的独立
+// identity，避免复用 AnimatedEmoji 的 set id/hash 后与真正的 598 文档缓存互相覆盖。
+var clientPlaceholderStickerSets = []domain.StickerSet{
+	{
+		ID:         7_776_100_000_000_001,
+		AccessHash: 7_776_100_000_000_101,
+		ShortName:  "tg_placeholders_android",
+		Title:      "Android Placeholders",
+		Kind:       domain.StickerSetKindSystem,
+		Official:   true,
+	},
+	{
+		ID:         7_776_100_000_000_002,
+		AccessHash: 7_776_100_000_000_102,
+		ShortName:  "tg_superplaceholders_android_2",
+		Title:      "Android Super Placeholders",
+		Kind:       domain.StickerSetKindSystem,
+		Official:   true,
+	},
+}
+
+func clientPlaceholderStickerSet(ref domain.StickerSetRef) (domain.StickerSet, bool) {
+	for _, set := range clientPlaceholderStickerSets {
+		switch ref.Kind {
+		case domain.StickerSetRefByShortName:
+			if ref.ShortName == set.ShortName {
+				return set, true
+			}
+		case domain.StickerSetRefByID:
+			if ref.ID == set.ID && ref.AccessHash == set.AccessHash {
+				return set, true
+			}
+		}
+	}
+	return domain.StickerSet{}, false
+}
+
+func projectClientPlaceholderStickerSet(placeholder, source domain.StickerSet, docs []domain.Document) (domain.StickerSet, []domain.Document) {
+	docByID := documentsByID(docs)
+	selectedDocs := make([]domain.Document, 0, androidPlaceholderStickerDocumentLimit)
+	selectedIDs := make([]int64, 0, androidPlaceholderStickerDocumentLimit)
+	selected := make(map[int64]struct{}, androidPlaceholderStickerDocumentLimit)
+	for _, id := range source.DocumentIDs {
+		if len(selectedDocs) == androidPlaceholderStickerDocumentLimit {
+			break
+		}
+		doc, found := docByID[id]
+		if !found {
+			continue
+		}
+		if _, duplicate := selected[id]; duplicate {
+			continue
+		}
+		selected[id] = struct{}{}
+		selectedIDs = append(selectedIDs, id)
+		selectedDocs = append(selectedDocs, doc)
+	}
+
+	placeholder.Animated = source.Animated
+	placeholder.Videos = source.Videos
+	placeholder.Emojis = source.Emojis
+	placeholder.TextColor = source.TextColor
+	placeholder.Count = len(selectedIDs)
+	placeholder.DocumentIDs = selectedIDs
+	placeholder.Hash = projectedStickerSetHash(selectedIDs)
+	placeholder.Packs = filterStickerPacks(source.Packs, selected)
+	placeholder.Keywords = filterStickerKeywords(source.Keywords, selected)
+	return placeholder, selectedDocs
+}
+
+func projectedStickerSetHash(ids []int64) int {
+	hash := int(tdesktopCountHash(ids) & 0x7fffffff)
+	if hash == 0 && len(ids) > 0 {
+		return 1
+	}
+	return hash
+}
+
+func filterStickerPacks(packs []domain.StickerPack, selected map[int64]struct{}) []domain.StickerPack {
+	out := make([]domain.StickerPack, 0, len(packs))
+	for _, pack := range packs {
+		filtered := domain.StickerPack{Emoticon: pack.Emoticon}
+		for _, id := range pack.DocumentIDs {
+			if _, ok := selected[id]; ok {
+				filtered.DocumentIDs = append(filtered.DocumentIDs, id)
+			}
+		}
+		if len(filtered.DocumentIDs) > 0 {
+			out = append(out, filtered)
+		}
+	}
+	return out
+}
+
+func filterStickerKeywords(keywords []domain.StickerKeyword, selected map[int64]struct{}) []domain.StickerKeyword {
+	out := make([]domain.StickerKeyword, 0, len(keywords))
+	for _, keyword := range keywords {
+		if _, ok := selected[keyword.DocumentID]; ok {
+			out = append(out, keyword)
+		}
+	}
+	return out
+}
+
+func placeholderStickerSetCandidates() []domain.StickerSetRef {
+	return []domain.StickerSetRef{
+		{Kind: domain.StickerSetRefBySystem, SystemKey: "emoji_generic_animations"},
+		{Kind: domain.StickerSetRefBySystem, SystemKey: "animated_emoji_animations"},
+		{Kind: domain.StickerSetRefByShortName, ShortName: "EmojiGenericAnimations"},
+		{Kind: domain.StickerSetRefByShortName, ShortName: "EmojiAnimations"},
+		{Kind: domain.StickerSetRefBySystem, SystemKey: "animated_emoji"},
+		{Kind: domain.StickerSetRefByShortName, ShortName: "AnimatedEmojies"},
+	}
 }
 
 func (r *Router) onMessagesGetAllStickers(ctx context.Context, hash int64) (tg.MessagesAllStickersClass, error) {
