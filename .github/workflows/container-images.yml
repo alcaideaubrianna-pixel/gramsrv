@@ -114,22 +114,16 @@ jobs:
           : "${ONEPANEL_API_KEY:?Set ONEPANEL_API_KEY in GitHub Actions secrets}"
           : "${ONEPANEL_COMPOSE_NAME:?Set ONEPANEL_COMPOSE_NAME in GitHub Actions secrets}"
 
-          api_key_headers() {
-            local timestamp token
+          panel_request() {
+            local method="$1" path="$2" body="$3" response status timestamp token
             timestamp="$(date +%s)"
             token="$(printf '1panel:%s' "$timestamp" | openssl dgst -sha256 -hmac "$ONEPANEL_API_KEY" -hex | awk '{print $2}')"
-            printf '%s\n' \
-              "1Panel-Token: $token" \
-              "1Panel-Timestamp: $timestamp"
-          }
-
-          panel_request() {
-            local method="$1" path="$2" body="$3" response status
             response="$(curl --fail-with-body --silent --show-error \
               --request "$method" \
               --url "${ONEPANEL_URL%/}/api/v2${path}" \
               --header 'Content-Type: application/json' \
-              $(api_key_headers | while IFS= read -r header; do printf '%s ' --header "$header"; done) \
+              --header "1Panel-Token: $token" \
+              --header "1Panel-Timestamp: $timestamp" \
               --data "$body" \
               --write-out $'\n%{http_code}')"
             status="${response##*$'\n'}"
@@ -160,6 +154,7 @@ jobs:
             exit 1
           fi
           updated_env="$(printf '%s\n' "$current_env" | sed -E "s/^TELESRV_IMAGE_TAG=.*/TELESRV_IMAGE_TAG=${deploy_tag}/")"
+          updated_env="$(printf '%s\n' "$updated_env" | sed -E "s#^TELESRV_IMAGE_PREFIX=.*#TELESRV_IMAGE_PREFIX=${IMAGE_PREFIX}#")"
           compose_content="$(sed -E "s/:\$\{TELESRV_IMAGE_TAG:-v2\}/:${deploy_tag}/g" deploy/docker/compose.yaml)"
           update_body="$(jq -n \
             --arg name "$ONEPANEL_COMPOSE_NAME" \
