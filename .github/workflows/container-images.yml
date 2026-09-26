@@ -137,6 +137,24 @@ jobs:
             printf '%s\n' "$http_body"
           }
 
+          wait_for_image() {
+            local container="$1" expected="$2" attempt containers actual
+            for attempt in $(seq 1 30); do
+              containers="$(panel_request GET '/containers?page=1&pageSize=100' '')"
+              actual="$(printf '%s' "$containers" | jq -r --arg name "$container" \
+                '.. | objects | select((.name? // .containerName? // "") == $name) | (.image? // .imageName? // empty)' \
+                2>/dev/null | head -n1)"
+              if [[ "$actual" == "$expected" ]]; then
+                echo "Verified ${container} is running ${actual}"
+                return 0
+              fi
+              echo "Waiting for ${container}: current=${actual:-unknown}, expected=${expected} (${attempt}/30)"
+              sleep 5
+            done
+            echo "Timed out waiting for ${container} to run ${expected}" >&2
+            return 1
+          }
+
           # docker/metadata-action's sha tag defaults to the short commit SHA.
           deploy_tag="sha-${GITHUB_SHA::7}"
           for role in migrate file core egress sfu admin edge; do
@@ -156,7 +174,7 @@ jobs:
               --arg image "${IMAGE_PREFIX}/${role}:${deploy_tag}" \
               '{names: [$container], image: $image, forcePull: true}')"
             panel_request POST /containers/upgrade "$upgrade_body" >/dev/null
-            sleep 5
+            wait_for_image "$container" "${IMAGE_PREFIX}/${role}:${deploy_tag}"
           done
 
-          echo "1Panel container upgrade requests completed"
+          echo "1Panel container upgrades verified"
