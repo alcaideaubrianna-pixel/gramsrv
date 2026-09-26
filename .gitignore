@@ -28,8 +28,12 @@ tmp/
 .gocache/
 .tdesktop-e2e/
 /deploy/docker/backups/
+
+# Local deployment credentials and generated runtime configuration.
+/.local-deploy/
 /deploy/docker/overrides/
 
 # IDE
 .idea/
 .vscode/
+.spec-workflow
