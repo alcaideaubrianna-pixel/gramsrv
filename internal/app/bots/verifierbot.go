@@ -195,11 +195,11 @@ const (
 // verifierBotWhatText is the part of /start that is true whether or not an
 // operator has activated this bot, so it is said first and unconditionally.
 func verifierBotWhatText() string {
-	return `I hand out THIRD-PARTY verification.
+	return `我负责授予第三方认证标记。
 
-A third-party mark is a verifier's own icon, shown right before the name of a bot, a channel or an account, plus one line of description in its profile. It means "this verifier vouches for this peer" -- nothing more.
+第三方认证标记是认证方自己的图标，会显示在机器人、频道或账号名称前，并在资料中显示一行说明。它只表示“该认证方为此对象背书”。
 
-It is NOT the official ` + branding.ProductName() + ` checkmark. The platform badge is granted by the platform itself (@verifybot collects those applications); a third-party mark is granted by the company running a verifier bot. The two are stored, shown and taken away separately, and neither one implies the other.`
+它不是 ` + branding.ProductName() + ` 官方认证标记。平台认证由平台本身授予（@verifybot 收集申请）；第三方认证标记由运营认证机器人的公司授予。两者分别存储、显示和撤销，互不代表对方。`
 }
 
 func verifierBotHelpText() string {
@@ -216,40 +216,40 @@ func verifierBotHelpText() string {
 }
 
 const (
-	verifierBotIdleText = `I only hand out third-party verification marks. Send /verify to apply, /status to see where your applications stand, /revoke to remove a mark, or /help to see what I understand.`
+	verifierBotIdleText = `我只负责授予第三方认证标记。发送 /verify 申请，发送 /status 查看申请状态，发送 /revoke 移除标记，或发送 /help 查看支持的命令。`
 
 	// verifierNotActivatedText is the honest answer when this bot has no live
 	// verifier status. It never pretends an application is possible.
-	verifierNotActivatedText = `I cannot accept applications yet.
+	verifierNotActivatedText = `我目前还不能接受申请。
 
-I am the built-in verifier of this server, and verifier status is granted by hand: an operator has to give me an icon from the verification icon catalogue and a company name to vouch under (admin panel, bot verifiers), and keep that row enabled. Until it exists I have no icon to put on anything, so filing an application with me would only produce paperwork nobody can act on.
+我是此服务器的内置认证机器人，认证状态需要由运营人员手动授予：运营人员必须在管理面板的机器人认证设置中，为我指定认证图标目录中的图标和背书公司名称，并保持该配置启用。在配置完成前，我没有可用于显示的图标，提交申请也只会产生无法处理的材料。
 
-Send /start again once the operator tells you I am activated. /help lists the rest of my commands.`
+运营人员通知我已启用后，请再次发送 /start。发送 /help 查看其他命令。`
 
 	verifierUnavailableText = `第三方认证当前在此服务器不可用。`
 
-	verifierNoTargetSourceText = `I cannot look up your bots and channels right now, so I have nothing to offer you. Please try again in a moment.`
+	verifierNoTargetSourceText = `目前无法查询你的机器人和频道，因此没有可供选择的对象。请稍后重试。`
 
-	verifierNoTargetsText = `I could not find anything of yours to mark. I can verify a bot you own, a channel or supergroup you created or administer, or your own account -- so get one of those first and come back with /verify.`
+	verifierNoTargetsText = `找不到可添加标记的对象。我可以认证你拥有的机器人、由你创建或管理的频道或超级群组，也可以认证你自己的账号。请先准备好其中一个对象，然后发送 /verify。`
 
-	verifierNoRequestsText = `You have not applied to me yet, and you carry none of my marks. Send /verify to apply.`
+	verifierNoRequestsText = `你还没有向我提交申请，也没有我的认证标记。发送 /verify 提交申请。`
 
-	verifierNothingToRevokeText = `You carry none of my marks, so there is nothing to remove. Send /status to see where your applications stand.`
+	verifierNothingToRevokeText = `你没有我的认证标记，因此没有可移除的标记。发送 /status 查看申请状态。`
 
-	verifierNothingToCancelText = `There is nothing to cancel. Send /verify to apply for the mark.`
+	verifierNothingToCancelText = `当前没有可取消的操作，请发送 /verify 申请认证标记。`
 
-	verifierExpiredButtonText = `That button is no longer active. Send /verify to apply, or /status to see where your applications stand.`
+	verifierExpiredButtonText = `按钮已失效。发送 /verify 申请，或发送 /status 查看申请状态。`
 
-	verifierPickButtonsText = `Please use the buttons in my message above.`
+	verifierPickButtonsText = `请使用我上方消息中的按钮。`
 
-	verifierGoneTargetText = `That one is not yours to verify any more, so I dropped it. Send /verify to start again.`
+	verifierGoneTargetText = `该对象已不再属于你或由你管理，因此已移除。请发送 /verify 重新开始。`
 
-	verifierApplyButtonText        = `Get verification`
-	verifierConfirmButtonText      = `✅ Confirm`
-	verifierCancelButtonText       = `❌ Cancel`
-	verifierRevokeMenuButtonText   = `Remove a mark`
-	verifierRevokeButtonText       = `✅ Remove the mark`
-	verifierRevokeCancelButtonText = `❌ Keep the mark`
+	verifierApplyButtonText        = `申请认证`
+	verifierConfirmButtonText      = `✅ 确认`
+	verifierCancelButtonText       = `❌ 取消`
+	verifierRevokeMenuButtonText   = `移除认证标记`
+	verifierRevokeButtonText       = `✅ 移除标记`
+	verifierRevokeCancelButtonText = `❌ 保留标记`
 )
 
 // verifierBotGlobalCommands are the commands honoured in every step, so an
@@ -314,9 +314,9 @@ func (s *Service) allowVerifierDialog(ctx context.Context, userID int64) (bool, 
 
 func verifierFloodText(retryAfter int) string {
 	if retryAfter > 0 {
-		return fmt.Sprintf("Too many requests. Please wait %d seconds and try again.", retryAfter)
+		return fmt.Sprintf("请求太频繁，请等待 %d 秒后重试。", retryAfter)
 	}
-	return "Too many requests. Please wait a moment and try again."
+	return "请求太频繁，请稍后重试。"
 }
 
 func (s *Service) handleVerifier(ctx context.Context, userID int64, body string) botReply {
@@ -336,7 +336,7 @@ func (s *Service) handleVerifier(ctx context.Context, userID int64, body string)
 		if verifierBotGlobalCommands[cmd] {
 			return s.handleVerifierCommand(ctx, userID, cmd, state, found)
 		}
-		return botReply{Text: "I do not know that command. Send /help for the list."}
+		return botReply{Text: "无法识别此命令，请发送 /help 查看命令列表。"}
 	}
 	if !found {
 		if text == "" {
@@ -361,7 +361,7 @@ func (s *Service) handleVerifier(ctx context.Context, userID int64, body string)
 		return botReply{Text: verifierPickButtonsText}
 	default:
 		s.deleteVerifierState(ctx, userID)
-		return botReply{Text: "Something went wrong, I forgot what we were doing. Send /verify to start again."}
+		return botReply{Text: "出了点问题，我忘记了当前操作。请发送 /verify 重新开始。"}
 	}
 }
 
@@ -545,7 +545,7 @@ func (s *Service) verifierIntro(ctx context.Context, userID int64, state domain.
 	if !s.saveVerifierState(ctx, state) {
 		return internalReply()
 	}
-	live := fmt.Sprintf("Verifier: %s\n\nThe mark I would put on your peer:\n%s\n\nTap the button below, or send /verify, to apply. An operator reads every application and decides; I only collect it. Send /help for the rest of my commands.",
+	live := fmt.Sprintf("认证方：%s\n\n我会为你的对象添加以下标记：\n%s\n\n点击下方按钮或发送 /verify 申请。每份申请都会由运营人员审核决定，我只负责收集。发送 /help 查看其他命令。",
 		verifierTruncate(strings.TrimSpace(settings.CompanyName), domain.MaxVerifierCompanyLength),
 		verifierDescriptionLine(settings))
 	return botReply{Text: verifierJoin(verifierBotWhatText(), live), ReplyMarkup: markup}
@@ -596,7 +596,7 @@ func (s *Service) verifierTargetPrompt(ctx context.Context, state domain.BotChat
 	if !s.saveVerifierState(ctx, state) {
 		return internalReply()
 	}
-	prompt := fmt.Sprintf("Which one should carry the %s mark? Pick it below.",
+	prompt := fmt.Sprintf("你想为哪个对象添加 %s 标记？请从下方选择。",
 		verifierTruncate(strings.TrimSpace(settings.CompanyName), domain.MaxVerifierCompanyLength))
 	return botReply{Text: verifierJoin(lead, prompt), ReplyMarkup: markup}
 }
@@ -685,13 +685,13 @@ func (s *Service) chooseVerifierTarget(ctx context.Context, state domain.BotChat
 	// Already applied for, or already marked: say so instead of filing a duplicate the
 	// service would refuse anyway.
 	if pending, found := s.verifierPendingRequest(ctx, peer); found {
-		return botReply{Text: fmt.Sprintf("Application #%d for %s is already with the operator, so there is nothing to file. Send /status to see where it stands.",
-			pending.ID, label)}
+		return botReply{Text: fmt.Sprintf("对象 %s 的申请 #%d 已交给运营人员处理，无需重复提交。发送 /status 查看状态。",
+			label, pending.ID)}
 	}
 	if mark, found := s.verifierMark(ctx, peer); found {
-		text := fmt.Sprintf("%s already carries my mark, so there is nothing to apply for.", label)
+		text := fmt.Sprintf("%s 已有我的认证标记，无需重复申请。", label)
 		if description := strings.TrimSpace(mark.Description); description != "" {
-			text += "\n\nIt reads: " + verifierTruncate(description, domain.MaxCustomVerificationDescriptionLength)
+			text += "\n\n说明：" + verifierTruncate(description, domain.MaxCustomVerificationDescriptionLength)
 		}
 		// The picker stays where it is (the dialog is still at the subject step): this
 		// only offers the way out, which is removing the mark.
@@ -701,7 +701,7 @@ func (s *Service) chooseVerifierTarget(ctx context.Context, state domain.BotChat
 		if !s.saveVerifierState(ctx, state) {
 			return internalReply()
 		}
-		return botReply{Text: text + "\n\nSend /revoke, or tap below, if you want it removed.", ReplyMarkup: markup}
+		return botReply{Text: text + "\n\n如需移除，请发送 /revoke 或点击下方按钮。", ReplyMarkup: markup}
 	}
 
 	verifierEnsureDraft(&state)
@@ -709,17 +709,17 @@ func (s *Service) chooseVerifierTarget(ctx context.Context, state domain.BotChat
 	state.Draft[verifierDraftTargetTitle] = target.Title
 	state.Draft[verifierDraftTargetUsername] = target.Username
 	delete(state.Draft, verifierDraftCorrelation)
-	return s.verifierAdvance(ctx, state, settings, verifierStepReason, "Subject: "+label+".")
+	return s.verifierAdvance(ctx, state, settings, verifierStepReason, "对象："+label+"。")
 }
 
 func (s *Service) handleVerifierReason(ctx context.Context, state domain.BotChatState, text string) botReply {
 	length := utf8.RuneCountInString(text)
 	if length < verifierMinReasonLength {
-		return botReply{Text: fmt.Sprintf("That is %d characters and I need at least %d. An operator has to be able to check what you say, so name who is behind it and what it is known for.",
+		return botReply{Text: fmt.Sprintf("当前有 %d 个字符，至少需要 %d 个。运营人员需要据此审核，请说明由谁运营以及对象因何知名。",
 			length, verifierMinReasonLength)}
 	}
 	if length > domain.MaxCustomVerificationReasonLength {
-		return botReply{Text: fmt.Sprintf("That is %d characters and the limit is %d. Please shorten it.",
+		return botReply{Text: fmt.Sprintf("当前有 %d 个字符，限制为 %d 个，请缩短内容。",
 			length, domain.MaxCustomVerificationReasonLength)}
 	}
 	settings, refusal, ok := s.verifierSettings(ctx, state.UserID)
@@ -728,7 +728,7 @@ func (s *Service) handleVerifierReason(ctx context.Context, state domain.BotChat
 	}
 	verifierEnsureDraft(&state)
 	state.Draft[verifierDraftReason] = text
-	return s.verifierAdvance(ctx, state, settings, verifierStepConfirm, "Saved.")
+	return s.verifierAdvance(ctx, state, settings, verifierStepConfirm, "已保存。")
 }
 
 // submitVerifierRequest files the application.
@@ -753,7 +753,7 @@ func (s *Service) submitVerifierRequest(ctx context.Context, state domain.BotCha
 		return s.startVerifierRequest(ctx, state)
 	}
 	if utf8.RuneCountInString(reason) < verifierMinReasonLength {
-		return s.verifierAdvance(ctx, state, settings, verifierStepReason, "I still need the reason.")
+		return s.verifierAdvance(ctx, state, settings, verifierStepReason, "仍需要填写申请理由。")
 	}
 	peer := verifierTargetPeer(target)
 	label := verifierDraftTargetLabel(state)
@@ -810,9 +810,9 @@ func (s *Service) cancelVerifierDialog(ctx context.Context, userID int64, state 
 	filed := verifierDraftInt(state, verifierDraftRequestID)
 	s.deleteVerifierState(ctx, userID)
 	if filed > 0 && state.Step == verifierStepDone {
-		return botReply{Text: fmt.Sprintf("Dropped. Application #%d is already with the operator, so it stays in the queue -- send /status to follow it.", filed)}
+		return botReply{Text: fmt.Sprintf("已放弃当前对话，但申请 #%d 已交给运营人员处理，仍会保留在队列中。发送 /status 查看状态。", filed)}
 	}
-	return botReply{Text: "Dropped, nothing was filed. Send /verify when you want to apply."}
+	return botReply{Text: "已放弃对话，未提交申请。需要申请时请发送 /verify。"}
 }
 
 // ---------------------------------------------------------------------------
@@ -828,7 +828,7 @@ func (s *Service) verifierStatusReply(ctx context.Context, userID int64) botRepl
 		return botReply{Text: verifierNoRequestsText}
 	}
 	var b strings.Builder
-	b.WriteString("Your third-party verification applications:")
+	b.WriteString("你的第三方认证申请：")
 	live := 0
 	for _, req := range requests {
 		label := verifierPeerLabel(req.PeerTitle, req.PeerUsername, req.Peer)
@@ -836,7 +836,7 @@ func (s *Service) verifierStatusReply(ctx context.Context, userID int64) botRepl
 		b.WriteString(strconv.FormatInt(req.ID, 10))
 		b.WriteString(" - ")
 		b.WriteString(label)
-		b.WriteString("\nStatus: ")
+		b.WriteString("\n状态：")
 		b.WriteString(verifierStatusLabel(req.Status))
 		if date := verifierDateLabel(req); date != "" {
 			b.WriteString(" (")
@@ -848,7 +848,7 @@ func (s *Service) verifierStatusReply(ctx context.Context, userID int64) botRepl
 		// appear in a bot message.
 		if req.Status == domain.CustomVerificationRejected || req.Status == domain.CustomVerificationRevoked {
 			if reason := strings.TrimSpace(req.DecisionReason); reason != "" {
-				b.WriteString("\nReason: ")
+				b.WriteString("\n原因：")
 				b.WriteString(reason)
 			}
 		}
@@ -857,20 +857,20 @@ func (s *Service) verifierStatusReply(ctx context.Context, userID int64) botRepl
 			// different fact, so it is read rather than inferred.
 			if mark, found := s.verifierMark(ctx, req.Peer); found {
 				live++
-				b.WriteString("\nMark: live")
+				b.WriteString("\n标记：有效")
 				if description := strings.TrimSpace(mark.Description); description != "" {
 					b.WriteString(" -- ")
 					b.WriteString(verifierTruncate(description, 200))
 				}
 			} else {
-				b.WriteString("\nMark: not on the peer any more")
+				b.WriteString("\n标记：已不在该对象上")
 			}
 		}
 	}
 	if live > 0 {
-		b.WriteString("\n\nSend /revoke to remove a mark.")
+		b.WriteString("\n\n发送 /revoke 移除认证标记。")
 	} else {
-		b.WriteString("\n\nSend /verify to apply for another peer.")
+		b.WriteString("\n\n发送 /verify 为其他对象申请认证。")
 	}
 	return botReply{Text: b.String()}
 }
@@ -909,7 +909,7 @@ func (s *Service) verifierRevokePrompt(ctx context.Context, state domain.BotChat
 		return internalReply()
 	}
 	return botReply{
-		Text:        verifierJoin(lead, "Which mark should I remove? The icon and the description disappear from the profile, and getting them back means applying again."),
+		Text:        verifierJoin(lead, "要移除哪个认证标记？图标和资料说明会从资料页消失，如需恢复必须重新提交申请。"),
 		ReplyMarkup: markup,
 	}
 }
@@ -980,7 +980,7 @@ func (s *Service) chooseVerifierRevokeTarget(ctx context.Context, state domain.B
 		return internalReply()
 	}
 	return botReply{
-		Text: fmt.Sprintf("Remove my mark from %s?\n\nThe icon before the name and the description in the profile go away immediately. Application #%d stays in your history as revoked, and a new mark would need a new application.",
+		Text: fmt.Sprintf("要从 %s 移除我的认证标记吗？\n\n名称前的图标和资料中的说明会立即消失。申请 #%d 会在历史记录中保留为已撤销，如需重新获得标记，必须提交新申请。",
 			verifierPeerLabel(chosen.PeerTitle, chosen.PeerUsername, peer), chosen.ID),
 		ReplyMarkup: markup,
 	}
@@ -1034,7 +1034,7 @@ func (s *Service) commitVerifierRevoke(ctx context.Context, state domain.BotChat
 		// The mark went away between the picker and this press. Nothing is recorded as
 		// removed by this dialog, so a repeat press re-checks rather than replaying a
 		// removal that never happened here.
-		return botReply{Text: fmt.Sprintf("There was no mark left on %s, so nothing changed.", label)}
+		return botReply{Text: fmt.Sprintf("%s 上已经没有认证标记，因此没有任何更改。", label)}
 	}
 	verifierEnsureDraft(&state)
 	state.Step = verifierStepDone
@@ -1050,7 +1050,7 @@ func verifierRevokedText(label string) string {
 	if strings.TrimSpace(label) == "" {
 		label = "that peer"
 	}
-	return fmt.Sprintf("My mark is removed from %s: the icon and the description are gone from the profile. Send /verify if you ever want to apply again.", label)
+	return fmt.Sprintf("已从 %s 移除我的认证标记，资料中的图标和说明已消失。需要再次申请时请发送 /verify。", label)
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,7 +1094,7 @@ func (s *Service) verifierAdvance(ctx context.Context, state domain.BotChatState
 func (s *Service) verifierStepReminder(state domain.BotChatState) botReply {
 	switch state.Step {
 	case verifierStepReason:
-		return botReply{Text: fmt.Sprintf("I am waiting for the reason, in one message, between %d and %d characters.",
+		return botReply{Text: fmt.Sprintf("请在一条消息中填写理由，字数需在 %d 到 %d 个字符之间。",
 			verifierMinReasonLength, domain.MaxCustomVerificationReasonLength)}
 	case verifierStepTarget, verifierStepConfirm, verifierStepRevokePick, verifierStepRevokeConfirm:
 		return botReply{Text: verifierPickButtonsText}
@@ -1108,31 +1108,31 @@ func verifierReasonPrompt(settings domain.BotVerifierSettings, label string) str
 	if company == "" {
 		company = "this verifier"
 	}
-	return fmt.Sprintf("Now tell me in one message why %s should vouch for %s: who is behind it, what it is publicly known for, and anything an operator can check. Between %d and %d characters.",
+	return fmt.Sprintf("请用一条消息说明 %s 为什么应该为 %s 背书：由谁运营、对象因何知名，以及运营人员可以核查的内容。字数需在 %d 到 %d 个字符之间。",
 		company, label, verifierMinReasonLength, domain.MaxCustomVerificationReasonLength)
 }
 
 func verifierSummaryText(state domain.BotChatState, settings domain.BotVerifierSettings) string {
 	var b strings.Builder
-	b.WriteString("Here is what I will file. Nothing reaches the operator until you tap ")
+	b.WriteString("以下是将要提交的申请。点击 ")
 	b.WriteString(verifierConfirmButtonText)
-	b.WriteString(".\n\nVerifier: ")
+	b.WriteString(" 后才会提交给运营人员。\n\n认证方：")
 	b.WriteString(strings.TrimSpace(settings.CompanyName))
-	b.WriteString("\nSubject: ")
+	b.WriteString("\n对象：")
 	b.WriteString(verifierDraftTargetLabel(state))
-	b.WriteString("\nThe mark it would carry: ")
+	b.WriteString("\n将获得的标记：")
 	b.WriteString(verifierDescriptionLine(settings))
-	b.WriteString("\n\nWhy:\n")
+	b.WriteString("\n\n理由：\n")
 	b.WriteString(state.Draft[verifierDraftReason])
-	b.WriteString("\n\nThis is a third-party mark, not the official ")
+	b.WriteString("\n\n这是第三方认证标记，不是官方 ")
 	b.WriteString(branding.ProductName())
-	b.WriteString(" checkmark, and I do not decide: an operator reads the application and either grants the mark or refuses it. I will message you here either way.")
+	b.WriteString(" 认证标记。我不负责决定：运营人员会审核申请并授予或拒绝标记，无论结果如何我都会在这里通知你。")
 	return b.String()
 }
 
 func verifierFiledText(requestID int64, label string) string {
-	return fmt.Sprintf("Application #%d is filed for %s.\n\nAn operator reads it by hand -- I cannot grant my own mark. Send /status any time to see where it stands, and I will message you here as soon as it is decided.",
-		requestID, label)
+	return fmt.Sprintf("对象 %s 的申请 #%d 已提交。\n\n申请会由运营人员人工审核，我无法自行授予标记。随时发送 /status 查看状态，审核完成后我会在这里通知你。",
+		label, requestID)
 }
 
 // ---------------------------------------------------------------------------
@@ -1173,18 +1173,18 @@ func verifierDecisionText(req domain.CustomVerificationRequest) (string, bool) {
 	label := verifierPeerLabel(req.PeerTitle, req.PeerUsername, req.Peer)
 	switch req.Status {
 	case domain.CustomVerificationApproved:
-		return fmt.Sprintf("Application #%d is approved: %s now carries my mark -- my icon before the name and my description in the profile.\n\nThis is a third-party mark, not the official %s checkmark. Send /revoke if you ever want it removed.",
+		return fmt.Sprintf("申请 #%d 已通过：%s 现已显示我的认证标记，名称前会有我的图标，资料中会有我的说明。\n\n这是第三方认证标记，不是官方 %s 认证标记。如需移除，请发送 /revoke。",
 			req.ID, label, branding.ProductName()), true
 	case domain.CustomVerificationRejected:
-		text := fmt.Sprintf("Application #%d for %s was not approved, so no mark was granted.", req.ID, label)
+		text := fmt.Sprintf("对象 %s 的申请 #%d 未通过，因此没有授予认证标记。", label, req.ID)
 		if reason := strings.TrimSpace(req.DecisionReason); reason != "" {
-			text += "\n\nReason: " + reason
+			text += "\n\n原因：" + reason
 		}
 		return text + "\n\nYou can apply again with /verify once the reason no longer applies.", true
 	case domain.CustomVerificationRevoked:
-		text := fmt.Sprintf("My mark has been taken off %s (application #%d): the icon and the description are no longer shown.", label, req.ID)
+		text := fmt.Sprintf("我的认证标记已从 %s 移除（申请 #%d），图标和资料说明不再显示。", label, req.ID)
 		if reason := strings.TrimSpace(req.DecisionReason); reason != "" {
-			text += "\n\nReason: " + reason
+			text += "\n\n原因：" + reason
 		}
 		return text, true
 	default:
@@ -1452,7 +1452,7 @@ func verifierDraftTargetOf(state domain.BotChatState) (domain.VerificationTarget
 func verifierDraftTargetLabel(state domain.BotChatState) string {
 	target, ok := verifierDraftTargetOf(state)
 	if !ok {
-		return "the selected subject"
+		return "已选择的对象"
 	}
 	return verifierPeerLabel(target.Title, target.Username, verifierTargetPeer(target))
 }
@@ -1500,11 +1500,11 @@ func verifierPeerLabel(title, username string, peer domain.Peer) string {
 	case title != "":
 		return verifierTruncate(title, 64)
 	case peer.Type == domain.PeerTypeChannel && peer.ID > 0:
-		return "channel " + strconv.FormatInt(peer.ID, 10)
+		return "频道 " + strconv.FormatInt(peer.ID, 10)
 	case peer.Type == domain.PeerTypeUser && peer.ID > 0:
-		return "account " + strconv.FormatInt(peer.ID, 10)
+		return "账号 " + strconv.FormatInt(peer.ID, 10)
 	default:
-		return "the selected peer"
+		return "已选择的对象"
 	}
 }
 
@@ -1524,28 +1524,28 @@ func verifierTargetButtonText(target domain.VerificationTarget) string {
 func verifierTargetKindLabel(kind domain.VerificationTargetType) string {
 	switch kind {
 	case domain.VerificationTargetBot:
-		return "Bot"
+		return "机器人"
 	case domain.VerificationTargetChannel:
-		return "Channel"
+		return "频道"
 	case domain.VerificationTargetSupergroup:
-		return "Group"
+		return "群组"
 	case domain.VerificationTargetUser:
-		return "Account"
+		return "账号"
 	default:
-		return "Subject"
+		return "对象"
 	}
 }
 
 func verifierStatusLabel(status domain.CustomVerificationRequestStatus) string {
 	switch status {
 	case domain.CustomVerificationPending:
-		return "waiting for an operator"
+		return "等待运营人员审核"
 	case domain.CustomVerificationApproved:
-		return "approved, the mark was granted"
+		return "已通过，认证标记已授予"
 	case domain.CustomVerificationRejected:
-		return "not approved"
+		return "未通过"
 	case domain.CustomVerificationRevoked:
-		return "the mark was taken away"
+		return "认证标记已移除"
 	default:
 		return string(status)
 	}
@@ -1554,11 +1554,11 @@ func verifierStatusLabel(status domain.CustomVerificationRequestStatus) string {
 func verifierDateLabel(req domain.CustomVerificationRequest) string {
 	switch {
 	case !req.ApprovedAt.IsZero():
-		return "granted " + req.ApprovedAt.UTC().Format("2006-01-02")
+		return "授予于 " + req.ApprovedAt.UTC().Format("2006-01-02")
 	case !req.RejectedAt.IsZero():
-		return "decided " + req.RejectedAt.UTC().Format("2006-01-02")
+		return "决定于 " + req.RejectedAt.UTC().Format("2006-01-02")
 	case !req.CreatedAt.IsZero():
-		return "filed " + req.CreatedAt.UTC().Format("2006-01-02")
+		return "提交于 " + req.CreatedAt.UTC().Format("2006-01-02")
 	default:
 		return ""
 	}
@@ -1607,23 +1607,23 @@ func verifierPolicyText(err error) (string, bool) {
 		return verifierNotActivatedText, true
 	case errors.Is(err, domain.ErrVerificationIconNotFound), errors.Is(err, domain.ErrVerificationIconInactive),
 		errors.Is(err, domain.ErrVerificationIconInvalid):
-		return "My icon is not usable right now, so I cannot mark anything. The operator has to fix that before I can take applications.", true
+		return "我的认证图标目前不可用，因此无法添加任何标记。运营人员修复后才能接受申请。", true
 	case errors.Is(err, domain.ErrCustomVerificationLimit):
-		return "I have marked as many peers as I am allowed to, so I cannot take another application until the operator raises the limit.", true
+		return "我已经达到允许添加标记的对象数量上限，运营人员提高上限后才能接受新申请。", true
 	case errors.Is(err, domain.ErrCustomVerificationRequestExists):
-		return "There is already an application waiting for that one. Send /status to see it.", true
+		return "该对象已有等待处理的申请，请发送 /status 查看。", true
 	case errors.Is(err, domain.ErrCustomVerificationTargetInvalid):
-		return "That one cannot carry my mark. I can verify a bot, a channel or supergroup, or an account.", true
+		return "该对象无法添加我的认证标记。我可以认证机器人、频道、超级群组或账号。", true
 	case errors.Is(err, domain.ErrCustomVerificationNotFound):
-		return "There is no mark of mine on that one, so there is nothing to remove.", true
+		return "该对象上没有我的认证标记，因此没有可移除的内容。", true
 	case errors.Is(err, domain.ErrCustomVerificationRequestNotFound):
-		return "I cannot find that application any more. Send /verify to file a fresh one.", true
+		return "找不到该申请，请发送 /verify 提交新申请。", true
 	case errors.Is(err, domain.ErrCustomVerificationRequestInvalid):
-		return "I could not accept that. Send /help to see what an application needs.", true
+		return "无法接受该内容，请发送 /help 查看申请要求。", true
 	case errors.Is(err, domain.ErrCustomVerificationVersionConflict):
-		return "That application just changed somewhere else. Send /status to see where it stands now.", true
+		return "该申请刚刚发生变化，请发送 /status 查看最新状态。", true
 	case errors.Is(err, domain.ErrVerifierDescriptionForbidden):
-		return "I may only apply my own description, so I cannot take a custom one for your peer.", true
+		return "我只能使用自己的认证说明，不能为你的对象使用自定义说明。", true
 	default:
 		return "", false
 	}
