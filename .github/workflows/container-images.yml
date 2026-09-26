@@ -140,9 +140,10 @@ jobs:
           wait_for_image() {
             local container="$1" expected="$2" attempt containers actual
             for attempt in $(seq 1 30); do
-              containers="$(panel_request GET '/containers?page=1&pageSize=100' '')"
+              containers="$(panel_request POST /containers/search \
+                '{"page":1,"pageSize":100,"state":"all","orderBy":"name","order":"ascending"}')"
               actual="$(printf '%s' "$containers" | jq -r --arg name "$container" \
-                '.. | objects | select((.name? // .containerName? // "") == $name) | (.image? // .imageName? // empty)' \
+                '.data.items[]? | select(.name == $name) | .imageName' \
                 2>/dev/null | head -n1)"
               if [[ "$actual" == "$expected" ]]; then
                 echo "Verified ${container} is running ${actual}"
