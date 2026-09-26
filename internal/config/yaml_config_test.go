@@ -733,6 +733,8 @@ func TestDockerRoleConfigVariablesAreInjectedByMatchingService(t *testing.T) {
 		"core": {
 			"TELESRV_ALLOW_INSECURE_DEVELOPMENT_AUTH": {},
 			"TELESRV_LOG_LEVEL":                       {},
+			"TELESRV_PASSKEY_RP_ID":                   {},
+			"TELESRV_PASSKEY_ALLOWED_ORIGINS":         {},
 		},
 		"egress": {"TELESRV_LOG_LEVEL": {}},
 		"file":   {"TELESRV_LOG_LEVEL": {}},

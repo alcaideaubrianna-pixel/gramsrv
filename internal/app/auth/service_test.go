@@ -797,10 +797,10 @@ func TestSignUpWritesOfficialLoginMessage(t *testing.T) {
 	if len(list.Users) != 1 || list.Users[0].ID != domain.OfficialSystemUserID || !list.Users[0].Verified || !list.Users[0].Support {
 		t.Fatalf("users = %+v, want verified support system user", list.Users)
 	}
-	if msg.ID == 0 || !strings.Contains(msg.Body, "Login code: 12345") {
+	if msg.ID == 0 || !strings.Contains(msg.Body, "登录验证码：12345") {
 		t.Fatalf("login message = %+v, want returned official login code message", msg)
 	}
-	if len(list.Messages) != 1 || !strings.Contains(list.Messages[0].Body, "Login code: 12345") {
+	if len(list.Messages) != 1 || !strings.Contains(list.Messages[0].Body, "登录验证码：12345") {
 		t.Fatalf("messages = %+v, want login code message", list.Messages)
 	}
 	if list.Dialogs[0].TopMessage != list.Messages[0].ID || list.Dialogs[0].UnreadCount != 1 {

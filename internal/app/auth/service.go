@@ -1489,11 +1489,11 @@ func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error
 }
 
 func loginMessageTemplate() string {
-	return `Login code: %s. Do not give this code to anyone, even if they say they are from ` + branding.ProductName() + `!
+	return `登录验证码：%s。即使对方声称来自 ` + branding.ProductName() + `，也不要将此验证码告诉任何人！
 
-This code can be used to log in to your ` + branding.ProductName() + ` account. We never ask it for anything else.
+此验证码仅用于登录你的 ` + branding.ProductName() + ` 账号。我们不会以其他理由向你索要验证码。
 
-If you didn't request this code by trying to log in on another device, simply ignore this message.`
+如果你没有尝试在其他设备登录，可以忽略此消息。`
 }
 
 func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code string) (domain.Message, error) {
@@ -1501,7 +1501,7 @@ func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code str
 		return domain.Message{}, nil
 	}
 	body := fmt.Sprintf(loginMessageTemplate(), code)
-	codeOffset := len("Login code: ")
+	codeOffset := len("登录验证码：")
 	msg, err := s.messages.Create(ctx, domain.Message{
 		OwnerUserID: userID,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
@@ -1509,7 +1509,7 @@ func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code str
 		Date:        int(time.Now().Unix()),
 		Body:        body,
 		Entities: []domain.MessageEntity{
-			{Type: domain.MessageEntityBold, Offset: 0, Length: len("Login code:")},
+			{Type: domain.MessageEntityBold, Offset: 0, Length: len("登录验证码：")},
 			{Type: domain.MessageEntityBold, Offset: codeOffset, Length: len(code)},
 		},
 	})

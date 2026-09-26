@@ -26,10 +26,9 @@ edge:
   listen: 0.0.0.0:2398
   rsa_key: /var/lib/telesrv-edge/server_rsa.pem
   websocket:
-    enabled: true
+    enabled: ${TELESRV_WEBSOCKET_ENABLE}
     allowed_origins:
-      - http://localhost:1234
-      - http://127.0.0.1:1234
+      - ${TELESRV_WEBSOCKET_ALLOWED_ORIGINS}
   mtproto:
     outbound_critical_global_max_bytes: 67108864
   location:

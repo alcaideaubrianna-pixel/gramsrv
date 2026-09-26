@@ -9,11 +9,11 @@ import (
 )
 
 func officialLoginCodeMessageTemplate() string {
-	return `Login code: %s. Do not give this code to anyone, even if they say they are from ` + branding.ProductName() + `!
+	return `登录验证码：%s。即使对方声称来自 ` + branding.ProductName() + `，也不要将此验证码告诉任何人！
 
-This code can be used to log in to your ` + branding.ProductName() + ` account. We never ask it for anything else.
+此验证码仅用于登录你的 ` + branding.ProductName() + ` 账号。我们不会以其他理由向你索要验证码。
 
-If you didn't request this code by trying to log in on another device, simply ignore this message.`
+如果你没有尝试在其他设备登录，可以忽略此消息。`
 }
 
 // LoginCodeDeliveryRequest describes one durable 777000 login-code delivery.
@@ -44,7 +44,7 @@ func OfficialLoginCodeMessage(userID int64, code string, date int) (Message, err
 		return Message{}, fmt.Errorf("%w: user=%d code_length=%d date=%d", ErrLoginCodeDeliveryInvalid, userID, len(code), date)
 	}
 	body := fmt.Sprintf(officialLoginCodeMessageTemplate(), code)
-	codeOffset := len("Login code: ")
+	codeOffset := len("登录验证码：")
 	return Message{
 		OwnerUserID: userID,
 		Peer:        Peer{Type: PeerTypeUser, ID: OfficialSystemUserID},
@@ -52,7 +52,7 @@ func OfficialLoginCodeMessage(userID int64, code string, date int) (Message, err
 		Date:        date,
 		Body:        body,
 		Entities: []MessageEntity{
-			{Type: MessageEntityBold, Offset: 0, Length: len("Login code:")},
+			{Type: MessageEntityBold, Offset: 0, Length: len("登录验证码：")},
 			{Type: MessageEntityBold, Offset: codeOffset, Length: len(code)},
 		},
 	}, nil

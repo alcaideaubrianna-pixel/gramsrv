@@ -34,11 +34,23 @@ const premiumBotHelpTextEN = `Buy Telegram Premium with Stars.
 Prices and durations come from the server catalog. The price is checked again
 before payment, and Stars are debited atomically.`
 
+const premiumBotHelpTextZH = `使用 Telegram Stars 购买 MixLink Premium。
+
+/premium - 查看可用套餐
+/gift - 赠送 Premium 给其他用户
+/status - 查看 Premium 有效期
+/history - 查看最近购买和赠送记录
+/terms - 查看购买说明
+/help - 显示此帮助
+
+价格和时长以服务器商品目录为准。付款前会再次校验价格，Stars 扣款以原子方式完成。`
+
 type premiumBotLocale string
 
 const (
 	premiumBotLocaleRU premiumBotLocale = "ru"
 	premiumBotLocaleEN premiumBotLocale = "en"
+	premiumBotLocaleZH premiumBotLocale = "zh"
 )
 
 func premiumLocaleFromSession(session domain.ClientSessionMetadata) premiumBotLocale {
@@ -46,9 +58,10 @@ func premiumLocaleFromSession(session domain.ClientSessionMetadata) premiumBotLo
 		return premiumBotLocaleRU
 	}
 	if session.PreferredLanguage() == "" {
-		// Preserve the historical default for legacy/internal calls without
-		// initConnection metadata. Real Telegram sessions carry lang_code.
 		return premiumBotLocaleRU
+	}
+	if session.PreferredLanguage() == "zh" {
+		return premiumBotLocaleZH
 	}
 	return premiumBotLocaleEN
 }
@@ -68,6 +81,9 @@ func (locale premiumBotLocale) text(ru, en string) string {
 }
 
 func (locale premiumBotLocale) help() string {
+	if locale == premiumBotLocaleZH {
+		return premiumBotHelpTextZH
+	}
 	return locale.text(premiumBotHelpText, premiumBotHelpTextEN)
 }
 
@@ -474,6 +490,11 @@ func (s *Service) premiumBotHistory(ctx context.Context, userID int64, locales .
 
 func premiumBotTerms(locales ...premiumBotLocale) botReply {
 	locale := premiumLocaleArg(locales)
+	if locale == premiumBotLocaleZH {
+		return botReply{Text: `MixLink Premium 使用 Telegram Stars 支付，具体价格以付款页面显示为准。
+
+新的购买会延长当前 Premium 有效期，不会缩短已有期限。每次成功扣款都会记录到 Stars 账本，并创建独立的 Premium 权益。退款通过单独的补偿操作完成，原始交易记录不会删除。`}
+	}
 	return botReply{Text: locale.text(`Premium продаётся за Telegram Stars по цене, указанной в форме оплаты.
 
 Новая покупка продлевает текущий срок Premium и никогда не сокращает его. Каждое успешное списание записывается в журнал Stars и создаёт отдельное право Premium. Возврат выполняется отдельной компенсирующей операцией; исходная транзакция не удаляется.`, `Premium is sold for Telegram Stars at the price shown on the payment form.

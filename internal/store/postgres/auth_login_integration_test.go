@@ -63,7 +63,7 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
 	}
-	if u.Phone != phone || msg.ID == 0 || !strings.Contains(msg.Body, "Login code: 12345") {
+	if u.Phone != phone || msg.ID == 0 || !strings.Contains(msg.Body, "登录验证码：12345") {
 		t.Fatalf("sign-up user/message = user %+v message %+v, want login message", u, msg)
 	}
 
@@ -78,7 +78,7 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	if len(list.Dialogs) != 1 || list.Dialogs[0].Peer.ID != domain.OfficialSystemUserID {
 		t.Fatalf("dialogs = %+v, want official login dialog", list.Dialogs)
 	}
-	if len(list.Messages) != 1 || list.Messages[0].ID != msg.ID || !strings.Contains(list.Messages[0].Body, "Login code: 12345") {
+	if len(list.Messages) != 1 || list.Messages[0].ID != msg.ID || !strings.Contains(list.Messages[0].Body, "登录验证码：12345") {
 		t.Fatalf("messages = %+v, want returned login message", list.Messages)
 	}
 	if len(list.Users) != 1 || list.Users[0].ID != domain.OfficialSystemUserID || !list.Users[0].Verified || !list.Users[0].Support {
