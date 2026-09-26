@@ -792,7 +792,7 @@ func TestVerifierBotHelpAndIdleText(t *testing.T) {
 	if help.Body != verifierBotHelpText() {
 		t.Fatalf("/help = %q", help.Body)
 	}
-	for _, want := range []string{"/start", "/verify", "/status", "/revoke", "/help", "not the official"} {
+	for _, want := range []string{"/start", "/verify", "/status", "/revoke", "/help", "官方认证"} {
 		if !strings.Contains(help.Body, want) {
 			t.Fatalf("/help missing %q", want)
 		}

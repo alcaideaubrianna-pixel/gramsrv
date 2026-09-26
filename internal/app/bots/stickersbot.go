@@ -44,18 +44,18 @@ const (
 	stickersBotCreatedListPageLimit = 20
 )
 
-const stickersBotHelpText = `I can help you create sticker and custom emoji packs for telesrv.
+const stickersBotHelpText = `我可以帮助你创建 MixLink 贴纸包和自定义表情包。
 
-Send /newpack to create a sticker pack.
-Send /newemoji to create a custom emoji pack.
-Send /addsticker to add an item to one of your packs.
-Send /delsticker to remove an item from one of your packs.
+发送 /newpack 创建贴纸包。
+发送 /newemoji 创建自定义表情包。
+发送 /addsticker 向已有贴纸包添加项目。
+发送 /delsticker 从贴纸包移除项目。
 
-Send a sticker/custom emoji, or upload a TGS, Lottie JSON, WebP, WebM, or MP4 file as a document. Send /publish when your pack is ready, then choose a short name for the link.
+发送贴纸或自定义表情，或将 TGS、Lottie JSON、WebP、WebM、MP4 文件作为文档上传。准备好后发送 /publish，再为链接设置短名称。
 
-/packs - list your created packs
-/cancel - cancel the current operation
-/help - show this message`
+/packs - 查看你创建的贴纸包
+/cancel - 取消当前操作
+/help - 显示帮助`
 
 var stickersBotGlobalCommands = map[string]bool{
 	"start": true, "help": true, "cancel": true,
@@ -92,13 +92,13 @@ func (s *Service) handleStickers(ctx context.Context, userID int64, msg domain.M
 		if stickersBotGlobalCommands[cmd] {
 			return s.handleStickersCommand(ctx, userID, cmd, state, found)
 		}
-		return botReply{Text: "Unrecognized command. Send /help for a list of commands."}
+		return botReply{Text: "无法识别的命令，请发送 /help 查看命令列表。"}
 	}
 	if !found {
 		if stickersBotDocument(msg) != nil {
-			return botReply{Text: "Start a pack first with /newpack or /newemoji."}
+			return botReply{Text: "请先发送 /newpack 或 /newemoji 创建贴纸包。"}
 		}
-		return botReply{Text: "Send /newpack to create a sticker pack or /newemoji to create a custom emoji pack."}
+		return botReply{Text: "请发送 /newpack 创建贴纸包，或发送 /newemoji 创建自定义表情包。"}
 	}
 	switch state.Step {
 	case stickersBotStepSet:
@@ -136,7 +136,7 @@ func (s *Service) handleStickers(ctx context.Context, userID int64, msg domain.M
 		if err := s.bots.DeleteBotChatState(ctx, domain.StickersBotUserID, userID); err != nil {
 			s.log.Error("stickersbot: delete corrupt state", zap.Int64("user_id", userID), zap.Error(err))
 		}
-		return botReply{Text: "Something went wrong, I forgot what we were doing. Send /newpack or /newemoji to start again."}
+		return botReply{Text: "出现问题，当前操作状态已丢失。请发送 /newpack 或 /newemoji 重新开始。"}
 	}
 }
 
@@ -149,13 +149,13 @@ func (s *Service) handleStickersCommand(ctx context.Context, userID int64, cmd s
 		return botReply{Text: stickersBotHelpText}
 	case "cancel":
 		if !found {
-			return botReply{Text: "No active pack to cancel."}
+			return botReply{Text: "当前没有可取消的贴纸包操作。"}
 		}
 		if err := s.bots.DeleteBotChatState(ctx, domain.StickersBotUserID, userID); err != nil {
 			s.log.Error("stickersbot: delete chat state", zap.Int64("user_id", userID), zap.Error(err))
 			return internalReply()
 		}
-		return botReply{Text: "Cancelled. Send /newpack or /newemoji when you are ready."}
+		return botReply{Text: "已取消。准备好后请发送 /newpack 或 /newemoji。"}
 	case stickersBotCmdNewPack:
 		return s.startStickersFlow(ctx, userID, stickersBotCmdNewPack, domain.StickerSetKindStickers)
 	case stickersBotCmdNewEmoji:
@@ -166,21 +166,21 @@ func (s *Service) handleStickersCommand(ctx context.Context, userID int64, cmd s
 		return s.startStickersEditFlow(ctx, userID, stickersBotCmdDel)
 	case stickersBotCmdPublish:
 		if !found || !stickersBotCreateCommand(state.Command) {
-			return botReply{Text: "Start a pack first with /newpack or /newemoji."}
+			return botReply{Text: "请先发送 /newpack 或 /newemoji 创建贴纸包。"}
 		}
 		if len(stickersBotDraftItemsFromState(state)) == 0 {
-			return botReply{Text: "Add at least one sticker material document before publishing."}
+			return botReply{Text: "发布前请至少添加一个贴纸素材文档。"}
 		}
 		state.Step = stickersBotStepShortName
 		if err := s.bots.UpsertBotChatState(ctx, cloneStickersBotState(state)); err != nil {
 			s.log.Error("stickersbot: save publish state", zap.Int64("user_id", userID), zap.Error(err))
 			return internalReply()
 		}
-		return botReply{Text: "Choose a short name for this pack. It will be used in the public link, for example: my_fun_pack"}
+		return botReply{Text: "请为贴纸包设置短名称，它会用于公开链接，例如：my_fun_pack"}
 	case stickersBotCmdPacks:
 		return s.listStickersBotPacks(ctx, userID)
 	default:
-		return botReply{Text: "Unrecognized command. Send /help for a list of commands."}
+		return botReply{Text: "无法识别的命令，请发送 /help 查看命令列表。"}
 	}
 }
 
@@ -197,9 +197,9 @@ func (s *Service) startStickersEditFlow(ctx context.Context, userID int64, cmd s
 		return internalReply()
 	}
 	if cmd == stickersBotCmdDel {
-		return botReply{Text: "Send the short name or telesrv link of the pack you want to edit. Use /packs to see your packs."}
+		return botReply{Text: "请发送要编辑的贴纸包短名称或链接，可发送 /packs 查看你的贴纸包。"}
 	}
-	return botReply{Text: "Send the short name or telesrv link of the pack you want to add to. Use /packs to see your packs."}
+	return botReply{Text: "请发送要添加内容的贴纸包短名称或链接，可发送 /packs 查看你的贴纸包。"}
 }
 
 func (s *Service) startStickersFlow(ctx context.Context, userID int64, cmd string, kind domain.StickerSetKind) botReply {
@@ -217,18 +217,18 @@ func (s *Service) startStickersFlow(ctx context.Context, userID int64, cmd strin
 		return internalReply()
 	}
 	if kind == domain.StickerSetKindEmoji {
-		return botReply{Text: "Alright, a new custom emoji pack. Send me a title for it."}
+		return botReply{Text: "好的，这是一个新的自定义表情包。请发送标题。"}
 	}
-	return botReply{Text: "Alright, a new sticker pack. Send me a title for it."}
+	return botReply{Text: "好的，这是一个新的贴纸包。请发送标题。"}
 }
 
 func (s *Service) handleStickersSet(ctx context.Context, state domain.BotChatState, raw string) botReply {
 	if s.stickers == nil {
-		return botReply{Text: "Sticker pack editing is not available right now."}
+		return botReply{Text: "贴纸包编辑功能暂时不可用。"}
 	}
 	shortName := normalizeStickersBotShortName(raw)
 	if shortName == "" || strings.HasPrefix(shortName, "/") {
-		return botReply{Text: "Send the pack short name or telesrv link. Use /packs to list your packs, or /cancel."}
+		return botReply{Text: "请发送贴纸包短名称或链接。可发送 /packs 查看列表，或发送 /cancel 取消。"}
 	}
 	set, _, found, err := s.stickers.ResolveStickerSet(ctx, domain.StickerSetRef{Kind: domain.StickerSetRefByShortName, ShortName: shortName})
 	if err != nil {
@@ -236,10 +236,10 @@ func (s *Service) handleStickersSet(ctx context.Context, state domain.BotChatSta
 		return internalReply()
 	}
 	if !found || set.Deleted || set.ID == 0 {
-		return botReply{Text: "I couldn't find that pack. Send a short name from /packs, or /cancel."}
+		return botReply{Text: "找不到该贴纸包，请从 /packs 选择短名称，或发送 /cancel。"}
 	}
 	if set.CreatorUserID != state.UserID {
-		return botReply{Text: "I can only edit packs created by you. Send one of your pack links, or /cancel."}
+		return botReply{Text: "只能编辑你创建的贴纸包，请发送自己的贴纸包链接，或发送 /cancel。"}
 	}
 	if state.Draft == nil {
 		state.Draft = map[string]string{}

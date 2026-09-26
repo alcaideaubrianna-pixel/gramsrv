@@ -79,7 +79,7 @@ func TestPremiumBotInvoiceUsesCatalogSnapshotAndBuyButton(t *testing.T) {
 		invoice.PlanVersion != plan.Version {
 		t.Fatalf("invoice = %+v, want catalog snapshot %+v", invoice, plan)
 	}
-	if !strings.Contains(reply.Text, "Текущий баланс: 1250 Stars") {
+	if !strings.Contains(reply.Text, "当前余额：1250 Stars") {
 		t.Fatalf("invoice text does not show Stars balance: %q", reply.Text)
 	}
 	if reply.ReplyMarkup == nil || len(reply.ReplyMarkup.Inline) != 1 ||
@@ -143,7 +143,7 @@ func TestPremiumBotGiftPickerAndCatalogInvoice(t *testing.T) {
 		invoice.PlanVersion != plan.Version || invoice.Message.Text != "Happy birthday" {
 		t.Fatalf("gift invoice = %+v", invoice)
 	}
-	if !containsAll(invoiceReply.Text, "Цена: 750 Stars", "Текущий баланс: 2200 Stars") {
+	if !containsAll(invoiceReply.Text, "价格：750 Stars", "当前余额：2200 Stars") {
 		t.Fatalf("gift invoice text does not show price and balance: %q", invoiceReply.Text)
 	}
 	if err := domain.ValidateReplyMarkup(invoiceReply.ReplyMarkup); err != nil {
@@ -162,10 +162,10 @@ func TestPremiumBotStatusAndHistory(t *testing.T) {
 			Months: 3, Status: domain.PremiumEntitlementActive, CreatedAt: now,
 		}},
 	})
-	if reply := svc.handlePremium(context.Background(), 1001, "/status"); !containsAll(reply.Text, "активен до", "UTC") {
+	if reply := svc.handlePremium(context.Background(), 1001, "/status"); !containsAll(reply.Text, "有效期至", "UTC") {
 		t.Fatalf("/status = %q", reply.Text)
 	}
-	if reply := svc.handlePremium(context.Background(), 1001, "/history"); !containsAll(reply.Text, "3 мес.", "подарок пользователю 2002") {
+	if reply := svc.handlePremium(context.Background(), 1001, "/history"); !containsAll(reply.Text, "3 个月", "赠送给用户 2002") {
 		t.Fatalf("/history = %q", reply.Text)
 	}
 	if !svc.HandlesBot(domain.PremiumBotConfiguredUserID()) {
@@ -232,7 +232,7 @@ func TestPremiumBotMenuCallbacksExecuteInsideLocalServer(t *testing.T) {
 		t.Fatalf("plans callback answer = %+v handled=%v err=%v", answer, handled, err)
 	}
 	reply := latestPremiumBotReply(t, messages, owner.ID, svc.premium.BotUserID())
-	if !strings.Contains(reply.Body, "Выберите тариф Premium") ||
+	if !strings.Contains(reply.Body, "请选择 Premium 套餐") ||
 		reply.ReplyMarkup == nil || len(reply.ReplyMarkup.Inline) != 1 ||
 		string(reply.ReplyMarkup.Inline[0][0].Data) != premiumCallbackBuy+"3" {
 		t.Fatalf("plans callback reply = %+v", reply)

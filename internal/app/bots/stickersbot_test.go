@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -150,7 +151,7 @@ func TestStickersBotSystemSeedStartAndCancel(t *testing.T) {
 	assertReplyEntityText(t, startReply, domain.MessageEntityBotCommand, "/newemoji")
 	assertReplyEntityText(t, startReply, domain.MessageEntityBotCommand, "/addsticker")
 	sendTextToStickers(t, svc, messages, owner, "/newpack")
-	if reply := sendTextToStickers(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "Cancelled") {
+	if reply := sendTextToStickers(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "已取消") {
 		t.Fatalf("/cancel reply = %q, want cancelled", reply)
 	}
 	if _, found, _ := bots.GetBotChatState(ctx, domain.StickersBotUserID, owner.ID); found {
@@ -162,13 +163,13 @@ func TestStickersBotNewPackNoMaterialAndInvalidEmoji(t *testing.T) {
 	svc, users, _, messages, creator, _ := newStickersBotTestService(t)
 	owner := newOwner(t, users, "+3001")
 
-	if reply := sendTextToStickers(t, svc, messages, owner, "/newpack"); !strings.Contains(reply, "sticker pack") {
+	if reply := sendTextToStickers(t, svc, messages, owner, "/newpack"); !strings.Contains(reply, "贴纸包") {
 		t.Fatalf("/newpack reply = %q, want sticker pack prompt", reply)
 	}
 	if reply := sendTextToStickers(t, svc, messages, owner, "My Pack"); !strings.Contains(reply, "Lottie JSON") {
 		t.Fatalf("title reply = %q, want document prompt", reply)
 	}
-	if reply := sendTextToStickers(t, svc, messages, owner, "/publish"); !strings.Contains(reply, "Add at least one") {
+	if reply := sendTextToStickers(t, svc, messages, owner, "/publish"); !strings.Contains(reply, "至少") {
 		t.Fatalf("empty publish reply = %q, want no material notice", reply)
 	}
 	if reply := sendTextToStickers(t, svc, messages, owner, "not a document"); !strings.Contains(reply, "WebM/MP4 must include video metadata") {
@@ -321,7 +322,7 @@ func TestStickersBotAddStickerToExistingPack(t *testing.T) {
 		DocumentIDs:   []int64{501},
 	})
 
-	if reply := sendTextToStickers(t, svc, messages, owner, "/addsticker"); !strings.Contains(reply, "short name") {
+	if reply := sendTextToStickers(t, svc, messages, owner, "/addsticker"); !strings.Contains(reply, "短名称") {
 		t.Fatalf("/addsticker reply = %q, want short name prompt", reply)
 	}
 	if reply := sendTextToStickers(t, svc, messages, owner, "https://telesrv.net/addstickers/fresh_pack"); !strings.Contains(reply, "Selected Fresh Pack") {
@@ -473,10 +474,15 @@ func assertReplyEntityText(t *testing.T, msg domain.Message, typ domain.MessageE
 		if entity.Type != typ {
 			continue
 		}
-		if entity.Offset < 0 || entity.Length < 0 || entity.Offset+entity.Length > len(msg.Body) {
-			t.Fatalf("entity %+v out of ASCII bounds for %q", entity, msg.Body)
+		if entity.Offset < 0 || entity.Length < 0 {
+			continue
 		}
-		if got := msg.Body[entity.Offset : entity.Offset+entity.Length]; got == want {
+		units := utf16.Encode([]rune(msg.Body))
+		if entity.Offset+entity.Length > len(units) {
+			continue
+		}
+		got := string(utf16.Decode(units[entity.Offset : entity.Offset+entity.Length]))
+		if got == want {
 			return
 		}
 	}

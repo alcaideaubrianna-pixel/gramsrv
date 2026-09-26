@@ -129,14 +129,14 @@ Tap the button below, or send /new, to start. Send /help for the full list of co
 }
 
 func verifyBotHelpText() string {
-	return `I collect official ` + branding.ProductName() + ` verification applications.
+	return `我负责收集 ` + branding.ProductName() + ` 官方认证申请。
 
-/new - file a verification application
-/status - list your applications and their status
-/cancel - withdraw the application you are working on
-/help - show this message
+/new - 提交认证申请
+/status - 查看申请及状态
+/cancel - 撤回当前申请
+/help - 显示此帮助
 
-One application asks for: the subject, a category, a description, the official website, optional social links, links to independent press coverage, and an optional comment for the reviewers. You can send /cancel at any point, and /status any time after filing.`
+申请需要填写对象、类别、简介、官方网站、可选社交链接、独立媒体报道链接，以及给审核人员的备注。任何时候都可以发送 /cancel，提交后可随时发送 /status。`
 }
 
 const verifyBotIdleText = `I only collect official verification applications. Send /new to file one, /status to check the ones you filed, or /help to see what I understand.`
@@ -170,10 +170,10 @@ This is the part a reviewer actually checks, so it has to be coverage you do not
 	verifyNoApplicationsText  = `You have not filed any verification applications yet. Send /new to file one.`
 	verifyIncompleteText      = `The application is not complete yet, so let's fill the missing part first.`
 
-	verifySubmitButtonText = `Submit application`
-	verifySkipButtonText   = `Skip`
-	verifyCancelButtonText = `Cancel application`
-	verifyApplyButtonText  = `Apply for verification`
+	verifySubmitButtonText = `提交申请`
+	verifySkipButtonText   = `跳过`
+	verifyCancelButtonText = `取消申请`
+	verifyApplyButtonText  = `申请认证`
 )
 
 // verifyBotGlobalCommands are the commands honoured in every step, so an

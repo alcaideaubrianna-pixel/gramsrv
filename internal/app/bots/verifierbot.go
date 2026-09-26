@@ -203,16 +203,16 @@ It is NOT the official ` + branding.ProductName() + ` checkmark. The platform ba
 }
 
 func verifierBotHelpText() string {
-	return `I am a verifier bot. I grant third-party marks: my icon before the name of your bot, channel or account, plus a description in its profile. This is not the official ` + branding.ProductName() + ` checkmark.
+	return `我是第三方认证机器人。我会在你的机器人、频道或账号名称前显示认证图标，并在资料中添加说明。这不是 ` + branding.ProductName() + ` 官方认证标记。
 
-/start - what a third-party mark is and who grants it
-/verify - apply for the mark
-/status - your applications and the marks you carry
-/revoke - remove a mark from one of your peers
-/cancel - drop the application I am collecting right now
-/help - show this message
+/start - 了解第三方认证及授予方
+/verify - 申请认证标记
+/status - 查看申请和已有标记
+/revoke - 移除你授予对象的标记
+/cancel - 放弃当前申请
+/help - 显示此帮助
 
-I do not decide anything: I collect the application, an operator grants or refuses the mark, and I message you here with the outcome.`
+我不负责最终决定：我只收集申请，由运营人员授予或拒绝标记，并在这里通知结果。`
 }
 
 const (
@@ -226,7 +226,7 @@ I am the built-in verifier of this server, and verifier status is granted by han
 
 Send /start again once the operator tells you I am activated. /help lists the rest of my commands.`
 
-	verifierUnavailableText = `Third-party verification is not available on this server right now.`
+	verifierUnavailableText = `第三方认证当前在此服务器不可用。`
 
 	verifierNoTargetSourceText = `I cannot look up your bots and channels right now, so I have nothing to offer you. Please try again in a moment.`
 

@@ -69,14 +69,14 @@ func TestBotFatherNewBotFlow(t *testing.T) {
 	if reply := sendToBotFather(t, svc, messages, owner, "/start"); !strings.Contains(reply, "/newbot") {
 		t.Fatalf("/start reply = %q, want help text", reply)
 	}
-	if reply := sendToBotFather(t, svc, messages, owner, "/newbot"); !strings.Contains(reply, "choose a name") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/newbot"); !strings.Contains(reply, "选择机器人名称") {
 		t.Fatalf("/newbot reply = %q, want name prompt", reply)
 	}
-	if reply := sendToBotFather(t, svc, messages, owner, "My Test Bot"); !strings.Contains(reply, "username") {
+	if reply := sendToBotFather(t, svc, messages, owner, "My Test Bot"); !strings.Contains(reply, "用户名") {
 		t.Fatalf("name reply = %q, want username prompt", reply)
 	}
 	// 非法 username：不以 bot 结尾。
-	if reply := sendToBotFather(t, svc, messages, owner, "mytest"); !strings.Contains(reply, "invalid") {
+	if reply := sendToBotFather(t, svc, messages, owner, "mytest"); !strings.Contains(reply, "无效") {
 		t.Fatalf("invalid username reply = %q, want invalid notice", reply)
 	}
 	reply := sendToBotFather(t, svc, messages, owner, "my_test_bot")
@@ -218,18 +218,18 @@ func TestBotFatherCancelAndUnknown(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+1001")
 
-	if reply := sendToBotFather(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "No active command") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "没有可取消") {
 		t.Fatalf("idle /cancel reply = %q", reply)
 	}
 	sendToBotFather(t, svc, messages, owner, "/newbot")
-	if reply := sendToBotFather(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "cancelled") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "已取消") {
 		t.Fatalf("active /cancel reply = %q", reply)
 	}
 	// 取消后名字输入不再被当作 newbot 步骤。
 	if reply := sendToBotFather(t, svc, messages, owner, "Some Name"); !strings.Contains(reply, "/help") {
 		t.Fatalf("post-cancel reply = %q, want fallback", reply)
 	}
-	if reply := sendToBotFather(t, svc, messages, owner, "/definitelynotacommand"); !strings.Contains(reply, "Unrecognized") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/definitelynotacommand"); !strings.Contains(reply, "无法识别") {
 		t.Fatalf("unknown command reply = %q", reply)
 	}
 }
@@ -243,7 +243,7 @@ func TestBotFatherUsernameTaken(t *testing.T) {
 	}
 	sendToBotFather(t, svc, messages, owner, "/newbot")
 	sendToBotFather(t, svc, messages, owner, "Second")
-	if reply := sendToBotFather(t, svc, messages, owner, "taken_bot"); !strings.Contains(reply, "already taken") {
+	if reply := sendToBotFather(t, svc, messages, owner, "taken_bot"); !strings.Contains(reply, "已被占用") {
 		t.Fatalf("taken username reply = %q", reply)
 	}
 	// 状态保留：可继续尝试新 username。
@@ -325,7 +325,7 @@ func TestBotFatherTokenAndRevoke(t *testing.T) {
 
 	// 选择不属于自己的 bot。
 	sendToBotFather(t, svc, messages, owner, "/token")
-	if reply := sendToBotFather(t, svc, messages, owner, "@nosuch_bot"); !strings.Contains(reply, "don't see that bot") {
+	if reply := sendToBotFather(t, svc, messages, owner, "@nosuch_bot"); !strings.Contains(reply, "找不到") {
 		t.Fatalf("unknown choose reply = %q", reply)
 	}
 }
@@ -335,7 +335,7 @@ func TestBotFatherMyBotsAndLimit(t *testing.T) {
 	owner := newOwner(t, users, "+1004")
 	ctx := context.Background()
 
-	if reply := sendToBotFather(t, svc, messages, owner, "/mybots"); !strings.Contains(reply, "don't have any bots") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/mybots"); !strings.Contains(reply, "还没有机器人") {
 		t.Fatalf("empty /mybots reply = %q", reply)
 	}
 	for i := 0; i < domain.MaxBotsPerOwner; i++ {
@@ -349,7 +349,7 @@ func TestBotFatherMyBotsAndLimit(t *testing.T) {
 	if _, _, err := svc.CreateBotWithDelivery(ctx, owner.ID, "One Too Many", "toomany_bot", appBotLifecycleEffects); err != domain.ErrBotsTooMany {
 		t.Fatalf("create over limit err = %v, want ErrBotsTooMany", err)
 	}
-	if reply := sendToBotFather(t, svc, messages, owner, "/newbot"); !strings.Contains(reply, "limit") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/newbot"); !strings.Contains(reply, "最多") {
 		t.Fatalf("over-limit /newbot reply = %q", reply)
 	}
 }

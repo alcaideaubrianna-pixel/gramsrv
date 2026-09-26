@@ -58,7 +58,7 @@ func premiumLocaleFromSession(session domain.ClientSessionMetadata) premiumBotLo
 		return premiumBotLocaleRU
 	}
 	if session.PreferredLanguage() == "" {
-		return premiumBotLocaleRU
+		return premiumBotLocaleZH
 	}
 	if session.PreferredLanguage() == "zh" {
 		return premiumBotLocaleZH
@@ -70,14 +70,62 @@ func premiumLocaleArg(locales []premiumBotLocale) premiumBotLocale {
 	if len(locales) > 0 && locales[0] != "" {
 		return locales[0]
 	}
-	return premiumBotLocaleRU
+	return premiumBotLocaleZH
 }
 
 func (locale premiumBotLocale) text(ru, en string) string {
+	if locale == premiumBotLocaleZH {
+		if translated, ok := premiumChineseText[ru]; ok {
+			return translated
+		}
+		return en
+	}
 	if locale == premiumBotLocaleRU {
 		return ru
 	}
 	return en
+}
+
+var premiumChineseText = map[string]string{
+	"Выберите ровно одного обычного пользователя кнопкой «Выбрать получателя».": "请使用“选择收件人”按钮选择一位普通用户。",
+	"Выберите тариф Premium:":                      "请选择 Premium 套餐：",
+	"Добро пожаловать в магазин Premium.":          "欢迎来到 Premium 商店。",
+	"Неизвестная команда.":                         "未知命令。",
+	"Купить Premium":                               "购买 Premium",
+	"Подарить Premium":                             "赠送 Premium",
+	"Мой Premium":                                  "我的 Premium",
+	"История покупок":                              "购买记录",
+	"Условия":                                      "购买说明",
+	"Покупка Premium временно недоступна.":         "Premium 购买暂时不可用。",
+	"Тарифы Premium временно недоступны.":          "Premium 套餐暂时不可用。",
+	"Подарки Premium временно недоступны.":         "Premium 赠送暂时不可用。",
+	"История покупок Premium временно недоступна.": "Premium 购买记录暂时不可用。",
+	"У вас пока нет покупок или подарков Premium.": "你还没有 Premium 购买或赠送记录。",
+	"Последние покупки и подарки Premium:\n":       "最近的 Premium 购买和赠送记录：\n",
+	"для себя":                                     "自己使用",
+	"недоступен":                                   "不可用",
+	"Оплатить %d Stars":                            "支付 %d Stars",
+	"Статус Premium временно недоступен.":          "Premium 状态暂时不可用。",
+	"Premium не активен. Выберите тариф:":          "Premium 尚未启用，请选择套餐：",
+	"Этот тариф больше недоступен. Выберите актуальный тариф:":                      "此套餐已不可用，请选择其他套餐：",
+	"%d дней Telegram Premium за %d Stars.":                                         "购买 %d 天 Telegram Premium，价格为 %d Stars。",
+	"%s\nТекущий баланс: %s.":                                                       "%s\n当前余额：%s。",
+	"Выберите пользователя, которому хотите подарить Telegram Premium.":             "请选择要赠送 Telegram Premium 的用户。",
+	"Выберите получателя Premium":                                                   "请选择 Premium 收件人",
+	"Выбрать получателя":                                                            "选择收件人",
+	"Получатель указан неверно. Выберите пользователя ещё раз.":                     "收件人无效，请重新选择用户。",
+	"Поздравление слишком длинное. Допустимо не более %d символов.":                 "祝福语太长，最多允许 %d 个字符。",
+	"Этому аккаунту нельзя подарить Premium. Выберите другого пользователя.":        "无法向此账号赠送 Premium，请选择其他用户。",
+	"Подарить Telegram Premium пользователю %s:\n":                                  "向用户 %s 赠送 Telegram Premium：\n",
+	"пользователь %d":                                                               "用户 %d",
+	"%d дней Telegram Premium для %s за %d Stars.":                                  "%d 天 Telegram Premium，赠送给 %s，价格为 %d Stars。",
+	"Подтвердите покупку тарифа %s для себя.\nЦена: %d Stars.\nТекущий баланс: %s.": "请确认购买 %s 套餐。\n价格：%d Stars。\n当前余额：%s。",
+	"Подтвердите покупку тарифа %s для %s.\nЦена: %d Stars.\nТекущий баланс: %s.":   "请确认给 %s 购买 %s 套餐。\n价格：%d Stars。\n当前余额：%s。",
+	"подарок пользователю %d":                                                       "赠送给用户 %d",
+	"подарок от пользователя %d":                                                    "来自用户 %d 的赠送",
+	"\n%d мес. - %s - %s - %s":                                                      "\n%d 个月 - %s - %s - %s",
+	"Premium активен до %s UTC.":                                                    "Premium 有效期至 %s（UTC）。",
+	"Кнопка устарела. Отправьте /start и попробуйте ещё раз.":                       "按钮已失效，请发送 /start 后重试。",
 }
 
 func (locale premiumBotLocale) help() string {
